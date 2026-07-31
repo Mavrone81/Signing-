@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: typecheck · lint · unit · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # test/integration/** talks to a real Postgres — it is not mocked. The
+    # port is 5433 (not 5432) because test/setup-env.ts defaults there, to
+    # match the local dev container. Credentials are the non-secret dev
+    # defaults from .env.example.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: digital_signing
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      # src/env.ts validates eagerly at module load, and `next build` imports
+      # every route to collect page data, so a build with no env fails before
+      # it compiles a line. Pointing at the service container above satisfies
+      # both the build and the integration tests with one value. AUTH_SECRET
+      # and DATA_KEY are obviously-fake test values — real ones are injected
+      # at runtime from the server's .env and never live in CI.
+      DATABASE_URL: postgresql://postgres:devpass@127.0.0.1:5433/digital_signing?schema=public
+      AUTH_SECRET: ci-only-auth-secret-not-used-at-runtime
+      # DATA_KEY must be exactly 64 hex chars to satisfy src/env.ts.
+      DATA_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs real history to scan, not a shallow clone.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prisma client
+        run: pnpm prisma generate
+
+      # Schema must exist before the integration suite connects.
+      - name: Apply migrations
+        run: pnpm prisma migrate deploy
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit + integration tests
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # This repository is PUBLIC. A committed credential is disclosed the
+      # moment it lands, so the scan covers full history, not just the diff.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
