@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+
+# next.js
+.next
+out
+build
+
+# env
+.env
+.env*.local
+
+# uploads
+.uploads
+
+# testing
+test-results
+playwright-report
+coverage
+
+# misc
+.DS_Store
+*.log
+next-env.d.ts
+*.tsbuildinfo

@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+build
+.env
+.env*.local
+.uploads
+test-results
+playwright-report
+coverage
+.git
+.superpowers
+docs
+*.log
+*.tsbuildinfo
+.DS_Store

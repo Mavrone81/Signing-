@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* Bevora palette, taken from the Bevora Design System colour tokens
+   (bevorasg.com): brand gold #b8860b as the signal colour, carried on warm
+   neutral greys. The app's own semantic token names (--paper, --shell, --ink,
+   --brand-primary, …) are kept as the public contract so every component that
+   already reads them picks up the rebrand without edits — only the values
+   underneath changed from the previous green scheme.
+
+   Design-system rule: gold is a SIGNAL colour. It carries primary actions,
+   focus and brand marks; it must not fill large surfaces. Layouts are carried
+   by the warm neutrals. */
+:root {
+  /* ---- Bevora brand gold (espresso → goldenrod → bright gold) ---- */
+  --gold-50: #fbf7ec;
+  --gold-100: #f5eccf;
+  --gold-200: #ead49a;
+  --gold-300: #ddbb63;
+  --gold-400: #cda42f;
+  --gold-500: #b8860b; /* core brand gold */
+  --gold-600: #976c0c;
+  --gold-700: #6f4f0c;
+  --gold-800: #4a350a;
+  --gold-900: #2a2008;
+
+  /* ---- Warm neutrals (slightly warm so they sit under the gold) ---- */
+  --neutral-0: #ffffff;
+  --neutral-25: #faf9f7;
+  --neutral-50: #f4f3f0;
+  --neutral-100: #e9e7e3;
+  --neutral-200: #d6d3cd;
+  --neutral-300: #b9b5ad;
+  --neutral-400: #918d84;
+  --neutral-500: #6e6a62;
+  --neutral-600: #54514a;
+  --neutral-700: #3e3c36;
+  --neutral-800: #2a2926;
+  --neutral-900: #1a1917;
+
+  /* ---- App semantic tokens (names unchanged; values now Bevora) ---- */
+  --paper: var(--neutral-0);
+  --shell: var(--neutral-25);
+  --edge: var(--neutral-100);
+  --edge-strong: var(--neutral-200);
+  --ink: var(--neutral-900);
+  --muted: var(--neutral-600);
+  --subtle: var(--neutral-400);
+
+  /* Primary = brand gold. `-dark` is the hover/active step, `-tint` the wash
+     used behind selected rows and badges. */
+  --brand-primary: var(--gold-500);
+  --brand-primary-dark: var(--gold-600);
+  --brand-primary-tint: var(--gold-50);
+
+  /* Accent = deep espresso-gold for secondary emphasis. Deliberately NOT a
+     second hue: the design system keeps gold as the only chromatic signal, so
+     the accent is a darker step of the same ramp rather than the old blue. */
+  --brand-accent: var(--gold-700);
+  --brand-accent-dark: var(--gold-800);
+  --brand-accent-tint: var(--gold-100);
+
+  /* Muted, professional status colours from the design system. `--good` is
+     deliberately NOT the brand gold: a signed/complete state must read as
+     distinct from brand chrome. */
+  --good: #2e7d57;
+  --warn: #d98a0b;
+  --danger: #b3402f;
+  --info: #2f6f8f;
+
+  --focus-ring: rgba(184, 134, 11, 0.45);
+
+  --background: var(--shell);
+  --foreground: var(--ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-paper: var(--paper);
+  --color-shell: var(--shell);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-primary-dark: var(--brand-primary-dark);
+  --color-brand-primary-tint: var(--brand-primary-tint);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-dark: var(--brand-accent-dark);
+  --color-brand-accent-tint: var(--brand-accent-tint);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  /* Manrope carries UI/body; Sora is reserved for display headings and the
+     wordmark; JetBrains Mono for hashes, ids and timestamps. */
+  --font-sans: var(--font-manrope);
+  --font-display: var(--font-sora);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), "Segoe UI", system-ui, -apple-system, sans-serif;
+}

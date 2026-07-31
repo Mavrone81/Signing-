@@ -1,0 +1,423 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  user
+}
+
+enum OrgRole {
+  owner
+  admin
+  member
+}
+
+enum DocStatus {
+  draft
+  signed
+  sent
+  completed
+  declined
+}
+
+// Signing order for a document sent for signature. `parallel` = all recipients
+// can sign at once; `sequential` = recipients sign in `Recipient.orderIndex`
+// order (enforced in Phase 2b's signer flow).
+enum SigningOrder {
+  parallel
+  sequential
+}
+
+// Lifecycle of a single Recipient on a sent document.
+enum RecipientStatus {
+  pending
+  viewed
+  signed
+  declined
+}
+
+enum FieldType {
+  signature
+  date
+  text
+  // Phase 4a — more field types. checkbox = 'true'/'false'; initials = a PNG
+  // data URL (like signature); radio = the selected option label (shared across
+  // a group); dropdown = the chosen option string.
+  checkbox
+  initials
+  radio
+  dropdown
+}
+
+enum AuditAction {
+  upload
+  finalize
+  download
+  reset
+  send
+  // Phase 2b — recipient signing (`/sign/[token]`): a recipient completed
+  // their fields (`sign`) or refused (`decline`). These are performed by an
+  // unauthenticated recipient (no User), so their AuditEvent.userId is null and
+  // the recipient's identity is carried in `detail`.
+  sign
+  decline
+  // Phase 3 — email notifications: a best-effort notification email was
+  // attempted for this document (request-to-sign / reminder / completed /
+  // declined). detail carries { kind, to, sent, reason? }. Never blocks the
+  // signing flow — recorded whether the send succeeded or failed.
+  notify
+}
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  name String
+  // Nullable: OAuth-only users (Google/Microsoft SSO) have no local password.
+  // Credentials login rejects users whose passwordHash is null.
+  passwordHash String?
+  role Role @default(user)
+  // Deployment-wide "IT admin" who manages the SSO/OAuth keys in Settings.
+  // Set true for the seed admin (see migration backfill + prisma/seed.ts).
+  isPlatformAdmin Boolean @default(false)
+  totpSecret String?
+  documents Document[]
+  memberships Membership[]
+  createdAt DateTime @default(now())
+}
+
+// Deployment-wide OAuth/SSO provider configuration (one row per provider:
+// 'google', 'microsoft'), managed by a platform admin via Settings →
+// Authentication. The client secret is stored ENCRYPTED (AES-256-GCM via
+// src/lib/crypto.ts) and is never returned to the client. Auth.js reads these
+// rows (Node runtime, src/auth.ts) to build the provider list dynamically.
+model AuthProviderConfig {
+  id String @id
+  provider String @unique
+  enabled Boolean @default(false)
+  clientId String?
+  clientSecretEnc String?
+  tenantId String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+// Deployment-wide outbound email (SMTP) configuration — a SINGLETON row
+// (provider 'smtp'), managed by a platform admin via Settings → Email. Mirrors
+// AuthProviderConfig: the SMTP password is stored ENCRYPTED (AES-256-GCM via
+// src/lib/crypto.ts) in `passwordEnc` and is NEVER returned to the client. The
+// mailer (src/lib/mailer.ts) reads this row (short-TTL cached), decrypts the
+// password, and sends best-effort — a missing/disabled config is a no-op that
+// never throws into the signing/send flow.
+model EmailConfig {
+  id String @id
+  provider String @unique @default("smtp")
+  enabled Boolean @default(false)
+  host String?
+  port Int?
+  secure Boolean @default(true)
+  username String?
+  passwordEnc String?
+  fromName String?
+  fromEmail String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+// PAdES/PKI digital signing — the deployment-wide PLATFORM signing identity
+// (a SINGLETON active row). When configured, the completed/flattened PDF is
+// sealed with a PAdES-compliant detached CMS signature (subfilter
+// ETSI.CAdES.detached, whole-file ByteRange) as the last finalize step; when no
+// active row exists, finalize behaves EXACTLY as before (flatten-only, no seal).
+//
+// This is a PLATFORM-LEVEL seal by design: the same certificate seals every
+// org's completed documents (it attests "this PDF was finalized, unaltered, by
+// this Bevora Sign deployment" — NOT the identity of any signer or tenant). It
+// therefore carries no tenant data and cannot leak one org's data into another.
+//
+// SECRET MATERIAL AT REST: the PKCS#12 (key + cert chain) is written to the
+// encrypted blob store under `p12Key` (AES-256-GCM via DATA_KEY, same as every
+// other blob) and the P12 passphrase is stored AES-256-GCM encrypted in
+// `passphraseEnc`. Neither the key, the P12 bytes, nor the passphrase is ever
+// returned by any API/settings GET or written to any log — only the non-secret
+// certificate metadata below is surfaced. Managed by a platform admin via
+// Settings → Signing (mirrors AuthProviderConfig / EmailConfig).
+model SigningCertificate {
+  id String @id
+  // One active platform cert at a time; saving a new one deactivates the rest.
+  active Boolean @default(true)
+  // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<id>.p12").
+  p12Key String
+  // AES-256-GCM encrypted (base64) P12 passphrase — NEVER returned to a client.
+  passphraseEnc String
+  // Non-secret certificate metadata (surfaced read-only in Settings + audit).
+  subject String
+  issuer String
+  serial String?
+  notBefore DateTime
+  notAfter DateTime
+  // SHA-256 (hex) of the signer certificate DER — a stable public fingerprint.
+  fingerprint String
+  // Optional RFC-3161 TSA URL. If set, a trusted timestamp is embedded
+  // best-effort; an unreachable TSA never fails the signing (signs without it).
+  tsaUrl String?
+  // 'self-signed' (generated in-app) or 'uploaded' (admin-supplied P12).
+  origin String @default("uploaded")
+  createdAt DateTime @default(now())
+  createdBy String?
+  @@index([active])
+}
+
+model Organization {
+  id String @id @default(cuid())
+  name String
+  slug String @unique
+  // Phase 5 — white-label per-org branding (self-service, org owner/admin).
+  // All nullable: an org that has set NONE of these is "uncustomized" and every
+  // surface falls back to the generic Bevora Sign identity (existing orgs look
+  // exactly as before). brandName defaults to `name` when null; brandColor
+  // defaults to the Bevora brand gold (#b8860b) when null; logoKey is the encrypted
+  // blob store key for an uploaded logo (e.g. "branding/<orgId>/logo.png") whose
+  // extension carries the MIME type — null = no logo. See src/lib/branding.ts.
+  brandName String?
+  brandColor String?
+  logoKey String?
+  createdAt DateTime @default(now())
+  memberships Membership[]
+  documents Document[]
+  invitations Invitation[]
+  templates Template[]
+  apiKeys ApiKey[]
+  webhooks Webhook[]
+}
+
+// Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key
+// (`sk_live_<random>`) is shown to the creator EXACTLY ONCE at creation; only
+// its `prefix` (first ~8 chars, a non-secret identifier for the UI) and
+// `hashedKey` (SHA-256 of the full raw key) are persisted — the raw key is NEVER
+// stored or returned again. Auth for `/api/v1` hashes the presented Bearer token
+// and looks up a non-revoked row here; the resolved `orgId` is the tenant scope
+// for everything that request may touch. `createdById` is reused as the synthetic
+// actor (document owner / audit userId) for API-driven actions.
+model ApiKey {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  name String
+  prefix String
+  hashedKey String @unique
+  createdById String
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+  revokedAt DateTime?
+  @@index([orgId])
+  @@index([hashedKey])
+}
+
+// Phase 5 — per-org outbound webhook endpoint. On a subscribed signing event
+// (`document.sent`, `recipient.viewed`, `recipient.signed`, `document.completed`,
+// `document.declined`) the app POSTs `{event, data, timestamp}` to `url`, signed
+// with an HMAC-SHA256 of the raw body under `secret` in the
+// `X-BevoraSign-Signature: sha256=<hex>` header so receivers can verify authenticity.
+// Delivery is BEST-EFFORT (never blocks the signing/send flow). `events` is the
+// set of subscribed event names (a `*` entry subscribes to all).
+model Webhook {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  url String
+  secret String
+  events String[]
+  enabled Boolean @default(true)
+  createdById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([orgId])
+}
+
+model Membership {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  role OrgRole @default(member)
+  createdAt DateTime @default(now())
+  @@unique([orgId, userId])
+}
+
+model Invitation {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  email String
+  role OrgRole @default(member)
+  token String @unique
+  expiresAt DateTime
+  acceptedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([email])
+}
+
+model Document {
+  id String @id @default(cuid())
+  owner User @relation(fields: [ownerId], references: [id])
+  ownerId String
+  org Organization @relation(fields: [orgId], references: [id])
+  orgId String
+  originalName String
+  status DocStatus @default(draft)
+  originalKey String
+  signedKey String?
+  originalSha256 String
+  signedSha256 String?
+  pageCount Int
+  // Send-for-signature (Phase 2a): `parallel` by default; `sentAt` is stamped
+  // when the document transitions draft → sent. Self-sign docs never leave the
+  // draft → signed path and keep signingOrder at its default.
+  signingOrder SigningOrder @default(parallel)
+  sentAt DateTime?
+  // Phase 4c — document expiry. Optional deadline set by the sender when sending
+  // for signature (or later). Enforced LAZILY on access: the signer `validate()`
+  // rejects a `sent` document whose `expiresAt` is in the past (reason
+  // `expired`), and the dashboard flags a non-completed doc past its expiry. No
+  // background job — a doc is simply un-signable once expired. Null = no expiry.
+  expiresAt DateTime?
+  fields Field[]
+  recipients Recipient[]
+  audit AuditEvent[]
+  createdAt DateTime @default(now())
+  signedAt DateTime?
+}
+model Field {
+  id String @id @default(cuid())
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId String
+  page Int
+  type FieldType
+  x Float
+  y Float
+  w Float
+  h Float
+  value String  // text, ISO date, or storage ref for signature image
+  style Json?  // TextStyle for type:text fields (null → defaults); null for other types
+  // Phase 4a: whether this field must be filled before finalize/complete.
+  // Existing rows default to true (backward-compatible: signature/date/text
+  // stay required). Optional fields may be left empty by the signer.
+  required Boolean @default(true)
+  // Phase 4a: type-specific config (Prisma Json; null for types that need none).
+  //  - dropdown: { choices: string[] } — the selectable options
+  //  - radio:    { group: string, label: string } — shared group key + this
+  //              option's label (value === label ⇒ this option is selected)
+  options Json?
+  assigneeId String?  // legacy send-for-signature seam (unused; superseded by recipientId)
+  // Send-for-signature (Phase 2a): null = the sender's own/self-sign field;
+  // set = assigned to a Recipient. onDelete SetNull so removing a recipient
+  // only UNASSIGNS their fields (reverting them to self) rather than deleting
+  // the placement.
+  recipientId String?
+  recipient Recipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  @@index([recipientId])
+}
+
+// A person a document is sent to for signature (Phase 2a). Created when the
+// sender adds recipients in the editor; `token` is the unguessable handle for
+// the tokenized `/sign/[token]` signer route (built in Phase 2b). Deleting a
+// document cascades its recipients; deleting a recipient only unassigns its
+// fields (Field.recipientId → null via SetNull).
+model Recipient {
+  id String @id @default(cuid())
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId String
+  email String
+  name String
+  orderIndex Int @default(0)
+  status RecipientStatus @default(pending)
+  token String @unique
+  viewedAt DateTime?
+  signedAt DateTime?
+  declinedAt DateTime?
+  fields Field[]
+  createdAt DateTime @default(now())
+  @@index([documentId])
+  @@index([token])
+}
+// Phase 4b — Templates. A reusable document layout: its own encrypted PDF blob
+// (COPIED from the source document at save time, never shared with a Document —
+// so deleting a doc can never orphan a template's PDF and vice-versa), plus the
+// placed field layout (TemplateField) and recipient placeholders (TemplateRole).
+// Tenant data: scoped to an Organization; only members may read/use it, only
+// the creator or an org owner/admin may delete it.
+model Template {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id])
+  orgId String
+  name String
+  description String?
+  // The template's OWN encrypted PDF blob key (e.g. "templates/<id>/original.pdf").
+  storageKey String
+  pageCount Int
+  createdById String
+  createdAt DateTime @default(now())
+  templateFields TemplateField[]
+  templateRoles TemplateRole[]
+  @@index([orgId])
+}
+
+// A recipient placeholder on a template (e.g. "Signer 1"). `roleKey` is the
+// stable handle that ties a TemplateField to this role; when a Document is
+// created from the template, each TemplateRole becomes a Recipient and the
+// roleKey→recipientId remap re-wires the fields onto the right recipient.
+model TemplateRole {
+  id String @id @default(cuid())
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  name String
+  orderIndex Int @default(0)
+  roleKey String
+  createdAt DateTime @default(now())
+  @@index([templateId])
+}
+
+// A placed field in a template's layout. Mirrors Field's geometry/type/config.
+// `roleKey` ties the field to a TemplateRole (null = a sender/self field).
+model TemplateField {
+  id String @id @default(cuid())
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  page Int
+  type FieldType
+  x Float
+  y Float
+  w Float
+  h Float
+  value String @default("")
+  style Json?
+  required Boolean @default(true)
+  options Json?
+  roleKey String?
+  createdAt DateTime @default(now())
+  @@index([templateId])
+}
+
+model AuditEvent {
+  id String @id @default(cuid())
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId String
+  // Nullable since Phase 2b: recipient `sign`/`decline` (and the multi-signer
+  // `finalize`) are performed by an unauthenticated recipient, not a User. The
+  // recipient's identity for those events lives in `detail`. Sender-driven
+  // events (upload/finalize-self/download/reset/send) still populate it.
+  userId String?
+  action AuditAction
+  ip String?
+  userAgent String?
+  detail Json?
+  createdAt DateTime @default(now())
+}

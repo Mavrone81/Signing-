@@ -1,0 +1,11 @@
+# Production override — merge with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Only overrides what differs from docker-compose.yml: the app runs
+# `prisma migrate deploy` (applying any pending migrations) before starting
+# the standalone server, so every deploy is self-migrating. `prisma` is
+# installed globally in the runner image for exactly this purpose (see
+# Dockerfile) since Next's standalone trace does not carry the Prisma CLI.
+services:
+  app:
+    command: ["sh", "-c", "prisma migrate deploy && node server.js"]
