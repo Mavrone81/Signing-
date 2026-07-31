@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import {
@@ -9,6 +8,7 @@ import {
   type ProviderClientView,
 } from '@/lib/auth-providers'
 import { saveProviderConfig } from './actions'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'Authentication · Settings · Bevora Sign' }
 
@@ -51,7 +51,7 @@ function ProviderCard({
           </p>
         </div>
         {saved && (
-          <span className="rounded-full bg-green-50 px-2.5 py-1 text-[12px] font-medium text-brand-primary-dark">
+          <span className="rounded-full bg-good/10 px-2.5 py-1 text-[12px] font-medium text-good">
             Saved
           </span>
         )}
@@ -153,23 +153,23 @@ export default async function AuthenticationSettingsPage({
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">Authentication</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Configure Google and Microsoft single sign-on for this deployment. Keys are stored
-        encrypted; the client secret is never shown again after you save it.
-      </p>
+      <PageHeader
+        title="Authentication"
+        backHref="/documents"
+        subtitle={
+          <>
+            Configure Google and Microsoft single sign-on for this deployment. Keys are stored
+            encrypted; the client secret is never shown again after you save it.
+          </>
+        }
+      />
 
       {/* HTTPS caveat — the SSO round-trip cannot complete over plain HTTP. */}
       <div
         className={`mt-5 rounded-lg border px-4 py-3 text-[13px] ${
           isHttps
             ? 'border-edge bg-shell text-ink'
-            : 'border-amber-300 bg-amber-50 text-amber-900'
+            : 'border-warn/35 bg-warn-tint text-ink'
         }`}
       >
         <strong>SSO requires HTTPS.</strong> Google and Microsoft reject non-HTTPS redirect URIs

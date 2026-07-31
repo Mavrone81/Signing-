@@ -96,7 +96,7 @@ export default async function LoginPage({
           </div>
 
           {registered && (
-            <p className="mb-4 rounded-lg bg-green-50 px-3 py-2 text-[13px] text-brand-primary-dark">
+            <p className="mb-4 rounded-lg bg-good/10 px-3 py-2 text-[13px] text-good">
               Account created. Please sign in.
             </p>
           )}
@@ -180,7 +180,7 @@ export default async function LoginPage({
             </div>
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-danger">
+              <p className="rounded-lg bg-danger-tint px-3 py-2 text-[13px] text-danger">
                 Invalid email or password.
               </p>
             )}

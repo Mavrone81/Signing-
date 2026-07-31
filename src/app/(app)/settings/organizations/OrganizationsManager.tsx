@@ -22,7 +22,7 @@ const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', mem
 // member color-coded pills).
 const ROLE_BADGE_CLASS: Record<string, string> = {
   owner: 'bg-brand-primary/10 text-brand-primary',
-  admin: 'bg-amber-500/10 text-amber-600',
+  admin: 'bg-warn/10 text-warn',
   member: 'bg-shell text-muted',
 }
 

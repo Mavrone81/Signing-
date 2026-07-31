@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { isPlatformAdmin } from '@/lib/auth-providers'
 import { getEmailConfigForClient } from '@/lib/email-config'
 import { saveEmailConfig, sendTestEmail } from './actions'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'Email · Settings · Bevora Sign' }
 
@@ -34,17 +34,17 @@ export default async function EmailSettingsPage({
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">Email</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Configure the outbound SMTP server used to email signing invitations, reminders, and
-        completed/declined notices. The password is stored encrypted and is never shown again after
-        you save it.
-      </p>
+      <PageHeader
+        title="Email"
+        backHref="/documents"
+        subtitle={
+          <>
+            Configure the outbound SMTP server used to email signing invitations, reminders, and
+            completed/declined notices. The password is stored encrypted and is never shown again after
+            you save it.
+          </>
+        }
+      />
 
       {saved && (
         <div className="mt-5 rounded-lg border border-edge bg-shell px-4 py-3 text-[13px] text-ink">
@@ -52,7 +52,7 @@ export default async function EmailSettingsPage({
         </div>
       )}
       {error === 'port' && (
-        <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+        <div className="mt-5 rounded-lg border border-warn/35 bg-warn-tint px-4 py-3 text-[13px] text-ink">
           Port must be a number between 1 and 65535.
         </div>
       )}
@@ -62,7 +62,7 @@ export default async function EmailSettingsPage({
         </div>
       )}
       {test === 'fail' && (
-        <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+        <div className="mt-5 rounded-lg border border-warn/35 bg-warn-tint px-4 py-3 text-[13px] text-ink">
           Test email failed. {TEST_REASON[reason ?? ''] ?? 'Unknown error.'}
         </div>
       )}

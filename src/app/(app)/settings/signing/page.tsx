@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { isPlatformAdmin } from '@/lib/auth-providers'
@@ -10,6 +9,7 @@ import {
   saveTsaUrl,
   removePlatformCertificate,
 } from './actions'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'Signing · Settings · Bevora Sign' }
 
@@ -38,19 +38,19 @@ export default async function SigningSettingsPage({
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">Digital signing (PAdES / PKI)</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Configure the platform signing certificate. When set, every completed document is sealed
-        with a PAdES-compliant digital signature (detached CMS, <code>ETSI.CAdES.detached</code>,
-        whole-file ByteRange) so the final PDF is tamper-evident and verifiable in Adobe Reader.
-        Until a certificate is configured, documents are finalized exactly as before (no seal). The
-        private key and passphrase are stored encrypted and are never shown again.
-      </p>
+      <PageHeader
+        title="Digital signing (PAdES / PKI)"
+        backHref="/documents"
+        subtitle={
+          <>
+            Configure the platform signing certificate. When set, every completed document is sealed
+            with a PAdES-compliant digital signature (detached CMS, <code>ETSI.CAdES.detached</code>,
+            whole-file ByteRange) so the final PDF is tamper-evident and verifiable in Adobe Reader.
+            Until a certificate is configured, documents are finalized exactly as before (no seal). The
+            private key and passphrase are stored encrypted and are never shown again.
+          </>
+        }
+      />
 
       {saved && (
         <div className="mt-5 rounded-lg border border-edge bg-shell px-4 py-3 text-[13px] text-ink">
@@ -61,7 +61,7 @@ export default async function SigningSettingsPage({
         </div>
       )}
       {error && (
-        <div className="mt-5 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-[13px] text-red-900">
+        <div className="mt-5 rounded-lg border border-danger/35 bg-danger-tint px-4 py-3 text-[13px] text-ink">
           {error === 'nofile' && 'Please choose a .p12/.pfx file.'}
           {error === 'toolarge' && 'That file is too large to be a signing certificate.'}
           {error === 'badp12' && 'Could not open the P12 — check the file and passphrase.'}
@@ -72,7 +72,7 @@ export default async function SigningSettingsPage({
       {/* Adobe trust caveat — a self-signed seal is tamper-evident but not chained
           to a public CA, so Adobe shows "signature validity unknown" until the
           certificate is added to the reader's trusted identities. */}
-      <div className="mt-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+      <div className="mt-5 rounded-lg border border-warn/35 bg-warn-tint px-4 py-3 text-[13px] text-ink">
         <strong>About trust in Adobe.</strong> A self-signed platform certificate makes the PDF
         tamper-evident and cryptographically verifiable, but Adobe Reader will show{' '}
         <em>&quot;signature validity is unknown&quot;</em> until the certificate is added to the
@@ -88,8 +88,8 @@ export default async function SigningSettingsPage({
             className={`rounded-full px-2.5 py-1 text-[12px] font-medium ${
               configured
                 ? cfg!.expired
-                  ? 'bg-red-50 text-red-700'
-                  : 'bg-green-50 text-brand-primary-dark'
+                  ? 'bg-danger/10 text-danger'
+                  : 'bg-good/10 text-good'
                 : 'bg-shell text-muted'
             }`}
           >
@@ -141,7 +141,7 @@ export default async function SigningSettingsPage({
             <form action={removePlatformCertificate} className="mt-4 border-t border-edge pt-4">
               <button
                 type="submit"
-                className="rounded-lg border border-red-300 px-4 py-2 text-[13px] font-medium text-red-700 hover:bg-red-50"
+                className="rounded-lg border border-danger/40 px-4 py-2 text-[13px] font-medium text-danger hover:bg-danger-tint"
               >
                 Remove certificate (stop sealing)
               </button>

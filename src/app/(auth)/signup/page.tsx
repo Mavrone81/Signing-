@@ -206,7 +206,7 @@ export default async function SignupPage({
             </div>
 
             {errorMessage && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-danger">
+              <p className="rounded-lg bg-danger-tint px-3 py-2 text-[13px] text-danger">
                 {errorMessage}
               </p>
             )}

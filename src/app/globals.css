@@ -67,6 +67,18 @@
   --danger: #b3402f;
   --info: #2f6f8f;
 
+  /* Washes behind status callouts — the design system's `--success-50` /
+     `--warning-50` / `--danger-50` / `--info-50`, renamed to the `-tint`
+     suffix this file already uses for `--brand-primary-tint`. Without these
+     there was no token for an alert background, so callouts reached for raw
+     Tailwind palette colours (bg-red-50, bg-amber-50, …) and drifted off the
+     Bevora ramp. Borders come from the solid colour at low opacity
+     (`border-warn/35`) rather than a fifth set of tokens. */
+  --good-tint: #e7f1ec;
+  --warn-tint: #fbf0dd;
+  --danger-tint: #f7e6e3;
+  --info-tint: #e3eef3;
+
   --focus-ring: rgba(184, 134, 11, 0.45);
 
   --background: var(--shell);
@@ -93,6 +105,10 @@
   --color-warn: var(--warn);
   --color-danger: var(--danger);
   --color-info: var(--info);
+  --color-good-tint: var(--good-tint);
+  --color-warn-tint: var(--warn-tint);
+  --color-danger-tint: var(--danger-tint);
+  --color-info-tint: var(--info-tint);
   /* Manrope carries UI/body; Sora is reserved for display headings and the
      wordmark; JetBrains Mono for hashes, ids and timestamps. */
   --font-sans: var(--font-manrope);

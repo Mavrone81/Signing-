@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { listMembers } from '@/server/team/actions'
 import { isEmailConfigured } from '@/lib/mailer'
 import { TeamManager } from './TeamManager'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'Team · Settings · Bevora Sign' }
 
@@ -22,16 +22,16 @@ export default async function TeamSettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">Team</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Add and manage the people in your organization. Owners and admins can add users — added users get document
-        and signing access (Member); only an owner can change an existing member&apos;s role.
-      </p>
+      <PageHeader
+        title="Team"
+        backHref="/documents"
+        subtitle={
+          <>
+            Add and manage the people in your organization. Owners and admins can add users — added users get document
+            and signing access (Member); only an owner can change an existing member&apos;s role.
+          </>
+        }
+      />
 
       <TeamManager
         members={members}

@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/db'
 import { loadLogoDataUri, resolveBrand } from '@/lib/branding'
 import { BrandingForm } from './BrandingForm'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'Branding · Settings · Bevora Sign' }
 
@@ -42,16 +42,16 @@ export default async function BrandingSettingsPage({
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">Branding</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        White-label the signing experience for your organization. Your brand name, colour, and logo
-        appear to the people you send documents to and in notification emails.
-      </p>
+      <PageHeader
+        title="Branding"
+        backHref="/documents"
+        subtitle={
+          <>
+            White-label the signing experience for your organization. Your brand name, colour, and logo
+            appear to the people you send documents to and in notification emails.
+          </>
+        }
+      />
 
       {saved && (
         <div className="mt-4 rounded-lg border border-brand-primary/30 bg-brand-primary/5 px-4 py-2.5 text-[13px] text-brand-primary-dark">

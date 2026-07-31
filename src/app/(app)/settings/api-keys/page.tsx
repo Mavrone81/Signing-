@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { listApiKeys } from '@/server/api-keys/actions'
 import { ApiKeysManager } from './ApiKeysManager'
+import { PageHeader } from '@/components/ui/PageHeader'
 
 export const metadata: Metadata = { title: 'API keys · Settings · Bevora Sign' }
 
@@ -19,16 +19,16 @@ export default async function ApiKeysSettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-2">
-        <Link href="/documents" className="text-[13px] text-brand-primary hover:underline">
-          ← Back to documents
-        </Link>
-      </div>
-      <h1 className="text-[24px] font-semibold text-ink">API keys</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Programmatic access to the Bevora Sign REST API (<code>/api/v1</code>). Authenticate requests with{' '}
-        <code>Authorization: Bearer sk_live_…</code>. Each key acts only within this organization.
-      </p>
+      <PageHeader
+        title="API keys"
+        backHref="/documents"
+        subtitle={
+          <>
+            Programmatic access to the Bevora Sign REST API (<code>/api/v1</code>). Authenticate requests with{' '}
+            <code>Authorization: Bearer sk_live_…</code>. Each key acts only within this organization.
+          </>
+        }
+      />
 
       <ApiKeysManager keys={keys} />
     </div>
