@@ -17,7 +17,7 @@
     "db:seed": "prisma db seed"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "node prisma/seed.mjs"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
