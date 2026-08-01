@@ -4,7 +4,8 @@ Self-hosted e-signature platform. Upload a PDF, place fields on it, send it to
 recipients, and collect legally-traceable signatures — producing a
 cryptographically signed output file and a full audit trail.
 
-Live at **https://sign.bevorasg.com**.
+Target deployment: **https://sign.bevorasg.com** (DNS is live; the box is not
+yet provisioned — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
 
 ## What it does
 
@@ -78,8 +79,10 @@ pnpm lint
 ## Deployment
 
 Push to `main`. GitHub Actions runs the correctness gate (type-check, lint,
-tests, production build); the deploy host polls `main` under a lock and rebuilds
-only once that gate is green. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+tests, production build) plus a full-history secret scan, and records success by
+pushing a `refs/ci-pass/<sha>` marker. The deploy host polls `main` under a lock
+and rebuilds only for a commit carrying that marker, so a red build never
+reaches production. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Licence
 

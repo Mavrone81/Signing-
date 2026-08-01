@@ -51,6 +51,10 @@ flock -n 9 || { log "another deploy in progress; skip"; exit 0; }
 cd "$REPO_DIR" || { log "FATAL repo missing at $REPO_DIR"; exit 1; }
 
 git fetch --quiet origin "$BRANCH" || { log "fetch failed"; exit 1; }
+# CI writes refs/ci-pass/<sha> only after typecheck, lint, the full test suite,
+# the production build AND the secret scan have all passed. Mirror those refs
+# locally so the gate below can ask whether this exact commit is green.
+git fetch --quiet --prune origin "+refs/ci-pass/*:refs/ci-pass/*" || true
 
 REMOTE=$(git rev-parse "origin/$BRANCH")
 LOCAL=$(git rev-parse HEAD)
@@ -68,7 +72,19 @@ if [ "$LAST_DEPLOYED" = "$REMOTE" ] && [ "$RUNNING" = "true" ]; then
 fi
 
 if [ "$LAST_DEPLOYED" = "$REMOTE" ]; then
+  # Self-heal only: this sha was already gated when it was first deployed, so
+  # do NOT re-check the marker here. Re-gating would mean a green commit whose
+  # marker was later pruned could never be restarted — the stack would stay
+  # down precisely when the self-heal is what is needed.
   log "code is current but $APP_CONTAINER is not running (state='${RUNNING:-absent}') -> self-healing"
+elif ! git rev-parse --verify --quiet "refs/ci-pass/${REMOTE}" >/dev/null; then
+  # New code that CI has not (yet) marked green. Exit 0, not 1: an in-flight
+  # or failed run is a normal state, not a deploy failure, and must not write
+  # the FAILED sentinel or spam the log every minute. The box keeps serving
+  # the last commit that did pass until the marker appears.
+  HELD="${LAST_DEPLOYED:0:8}"
+  log "origin/$BRANCH is ${REMOTE:0:8} but no ci-pass marker yet; holding at ${HELD:-<none>}"
+  exit 0
 elif [ "$LOCAL" = "$REMOTE" ]; then
   log "retrying previously-failed deploy of ${REMOTE:0:8}"
 else

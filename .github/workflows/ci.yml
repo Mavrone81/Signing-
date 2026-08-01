@@ -110,3 +110,27 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin gitleaks
           gitleaks detect --redact --no-banner --verbose --exit-code 1
+
+  # The deploy gate. Box 165 pulls; it does not receive a push — deliberately,
+  # so no deploy key for a production box has to live in a PUBLIC repo's
+  # secrets. But a puller has no way to know whether a commit is any good, so
+  # without this the box would deploy whatever landed on main within ~60s,
+  # red build and all.
+  #
+  # So: this job runs only after BOTH other jobs pass, and records that fact
+  # as a ref the box can check — `refs/ci-pass/<sha>`. The ref existing IS the
+  # green signal. `needs:` gives the ordering; a failure in either job means
+  # this job never runs and the marker is never written, so the box simply
+  # keeps serving the last commit that did pass.
+  mark:
+    name: mark ci-pass
+    needs: [gate, secrets]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record ci-pass marker
+        run: git push origin "HEAD:refs/ci-pass/${GITHUB_SHA}"

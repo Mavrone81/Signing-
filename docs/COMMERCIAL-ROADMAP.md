@@ -54,8 +54,21 @@ Documents are tenant-scoped to an Organization.
   Terms/Privacy + PDPA/GDPR data handling.
 
 ## Status
-- [ ] Phase 1 (in progress)
-- [ ] Phase 2
-- [ ] Phase 3
-- [ ] Phase 4
-- [ ] Phase 5
+_Last verified against the code 2026-08-01._
+
+- [x] Phase 1 — Foundation (`Organization` / `Membership` / `Invitation`, signup,
+      tenant scoping, Settings → Authentication)
+- [x] Phase 2 — Send-for-signature (`Recipient`, `/sign/[token]`, sequential +
+      parallel order)
+- [x] Phase 3 — Email notifications (invite / reminder / completed / declined,
+      SMTP configured in-app)
+- [x] Phase 4 — Templates, extra field types, dashboard, reminders/expiry/
+      decline, `AuditEvent` trail
+- [ ] Phase 5 — **partial.** Shipped: white-label branding, public API +
+      webhooks, PAdES/PKI signing with optional RFC-3161 timestamps, Google +
+      Microsoft SSO (built; activates once `AUTH_URL` is https — see the HTTPS
+      constraint above). Not started: SCIM, object storage (S3/R2) + backups/DR,
+      error tracking, rate limiting, Stripe billing, Terms/Privacy + PDPA/GDPR.
+
+The Phase 5 remainder is mostly blocked on external credentials or on content
+someone has to write, not on engineering.
