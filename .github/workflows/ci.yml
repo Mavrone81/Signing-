@@ -91,7 +91,22 @@ jobs:
         with:
           fetch-depth: 0
       # This repository is PUBLIC. A committed credential is disclosed the
-      # moment it lands, so the scan covers full history, not just the diff.
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # moment it lands, so the scan covers FULL history, not just the diff.
+      #
+      # gitleaks-action@v2 is deliberately NOT used here. On a push event it
+      # scans only the pushed range, via
+      #   git log -p --no-merges --first-parent <first>^..<last>
+      # which (a) quietly contradicts the full-history intent above — anything
+      # already in history is never re-examined — and (b) fails outright on the
+      # very first push to a repo, because <first> is then the root commit and
+      # `<root>^` is not a valid revision. That failure is indistinguishable
+      # from a real finding in the run summary while having scanned 0 bytes.
+      #
+      # Running the binary directly with no --log-opts scans every commit.
+      - name: gitleaks (full history)
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks detect --redact --no-banner --verbose --exit-code 1
