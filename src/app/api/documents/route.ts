@@ -15,7 +15,7 @@ const CONTENT_LENGTH_MARGIN_BYTES = 1024
 
 function requestMeta(req: NextRequest) {
   // x-forwarded-for / x-real-ip are only trustworthy because this app sits
-  // behind the nginx reverse proxy on the deploy host, which sets them itself. If that
+  // behind a reverse proxy that sets them itself. If that
   // boundary is ever bypassed (direct access to this origin), these headers
   // are client-controlled and can be spoofed.
   const ip =

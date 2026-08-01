@@ -2,16 +2,12 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 #                  -f docker-compose.165.yml up -d --build app
 #
-# Why this file exists at all: the base stack containerizes nginx because the
-# RMA .116 host has no host-level nginx and its docker user has no sudo. Box
-# 165 is the opposite — it runs host nginx 1.24 + certbot fronting ~17 other
-# stacks, and that host nginx is what terminates TLS for sign.bevorasg.com.
-# Running a second nginx in a container would be a pointless extra hop, so
-# here `app` publishes a loopback port directly and the host proxies to it.
+# Box 165 runs host nginx + certbot fronting every stack on it, and that host
+# nginx is what terminates TLS for sign.bevorasg.com. So `app` publishes a
+# loopback port directly here and the host proxies to it.
 #
-# Container names are re-prefixed `bevorasign-*` so that every docker command
-# on this shared box can be scoped by name to this stack alone, and so nothing
-# reads as the RMA "digital-signing" deployment it was forked from.
+# Container names are re-prefixed `bevorasign-*` so every docker command on
+# this shared multi-tenant box can be scoped by name to this stack alone.
 services:
   app:
     container_name: bevorasign-app
@@ -28,9 +24,3 @@ services:
     # no host port at all. Debug with `docker exec -it bevorasign-db psql`.
     ports: !override []
 
-  nginx:
-    # Not "removed" — compose overrides cannot delete a service — but given a
-    # profile that is never requested, so `up` never starts it. The base
-    # definition stays intact for the .116-style deployment.
-    profiles:
-      - containerized-proxy

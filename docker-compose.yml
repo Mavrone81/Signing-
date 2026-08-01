@@ -1,20 +1,14 @@
-# Digital Signing — base stack (app + db). Deployed on the RMA .116 docker
-# host behind nginx (see deploy/nginx-digital-signing.conf). Real secrets
-# live in a git-ignored .env on the server (see .env.example for the
-# contract) — never commit .env.
+# Bevora Sign — base stack (app + db). Real secrets live in a git-ignored
+# .env on the server (see .env.example for the contract) — never commit .env.
 #
-# Public hop is the `nginx` service (publishes host :8080, LAN) which proxies
-# to `app` over the internal docker network. `app` has NO host port — it is
-# reachable only through nginx. Postgres is bound to 127.0.0.1 only and never
-# leaves the host. In-cluster, `app` reaches `db` over the docker network via
-# hostname `db:5432` — DATABASE_URL in .env targets `db`, not localhost (the
-# host-mapped 13101 is for host-side psql/debugging only).
+# Postgres is bound to 127.0.0.1 only and never leaves the host. In-cluster,
+# `app` reaches `db` over the docker network via hostname `db:5432` —
+# DATABASE_URL in .env targets `db`, not localhost (the host-mapped 13101 is
+# for host-side psql/debugging only).
 #
-# The .116 host runs no host-level nginx and the docker user has no sudo, so
-# nginx is containerized here (survives the flock-cron redeploys). LAN-reachable
-# at http://<deploy-host>:8080, protected by network segmentation;
-# internal-only, no TLS in v1. FOLLOW-UP (deferred): add TLS + hostname or front
-# via the IIS .150 reverse-proxy (LE cert) like atten/opsdash.
+# This file defines no public hop. The deploy target (box 165) terminates TLS
+# at its own host nginx + certbot and proxies to a loopback port published by
+# `app` — see docker-compose.165.yml and deploy/nginx-sign.bevorasg.com.conf.
 services:
   db:
     image: postgres:16
@@ -47,25 +41,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # No host port: `app` is reachable only via the nginx service below.
+    # No host port here: the deploy overlay decides how `app` is exposed
+    # (docker-compose.165.yml publishes it on 127.0.0.1 for the host nginx).
     expose:
       - "3000"
     volumes:
       - digital_signing_uploads:/data/uploads
 
-  nginx:
-    # Pinned to a recent patched mainline (avoid stale 1.27-alpine —
-    # CVE-2026-42945 per the dependency-CVE-hygiene SOP). The estate CVE
-    # monitor should keep this current.
-    image: nginx:1.29-alpine
-    container_name: digital-signing-nginx
-    restart: unless-stopped
-    depends_on:
-      - app
-    ports:
-      - "8080:80"
-    volumes:
-      - ./deploy/nginx-digital-signing.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   digital_signing_pgdata:

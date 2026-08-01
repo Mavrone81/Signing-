@@ -11,8 +11,8 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 function clientIp(req: NextRequest): string | null {
-  // x-forwarded-for / x-real-ip are only trustworthy behind the nginx reverse
-  // proxy on the deploy host, which sets them itself; direct origin access could spoof.
+  // x-forwarded-for / x-real-ip are only trustworthy behind a reverse proxy
+  // that sets them itself; direct origin access could spoof.
   return (
     req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
     req.headers.get('x-real-ip') ??
