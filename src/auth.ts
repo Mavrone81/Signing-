@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { slugify } from '@/lib/slug'
 import { getActiveOAuthConfigs } from '@/lib/auth-providers'
+import { clientIp, loginKey, isBlocked, recordFailure, clearFailures, sweep } from '@/lib/login-throttle'
 import { authConfig } from './auth.config'
 
 const creds = z.object({ email: z.string().min(1), password: z.string().min(1) })
@@ -140,20 +141,39 @@ export const { handlers, signIn, signOut, auth } = NextAuth(async () => ({
   providers: [
     Credentials({
       credentials: { email: {}, password: {} },
-      authorize: async (raw) => {
+      authorize: async (raw, request) => {
         const parsed = creds.safeParse(raw)
         if (!parsed.success) return null
 
         const { email, password } = parsed.data
+
+        // 5 failed attempts per (email, IP) per 15 minutes. Returning null is
+        // the only signal this callback can give, so a throttled attempt looks
+        // exactly like a wrong password — which also avoids telling an attacker
+        // when they have tripped the limit.
+        sweep()
+        const key = loginKey(email, clientIp(request.headers))
+        if (isBlocked(key)) return null
+
         const user = await prisma.user.findUnique({
           where: { email: email.toLowerCase().trim() },
         })
-        if (!user) return null
+        if (!user) {
+          recordFailure(key)
+          return null
+        }
         // OAuth-only users have no local password — reject Credentials login.
-        if (!user.passwordHash) return null
+        if (!user.passwordHash) {
+          recordFailure(key)
+          return null
+        }
 
         const ok = await verify(user.passwordHash, password)
-        if (!ok) return null
+        if (!ok) {
+          recordFailure(key)
+          return null
+        }
+        clearFailures(key)
 
         return {
           id: user.id,
