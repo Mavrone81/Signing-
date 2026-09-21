@@ -51,7 +51,14 @@ export async function sendTeamInvite(opts: {
       brand,
     })
 
-    return await sendEmail({ to: opts.toEmail, subject: email.subject, html: email.html, text: email.text })
+    // Sent AS the org the invitee is joining.
+    return await sendEmail({
+      orgId: opts.orgId,
+      to: opts.toEmail,
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
+    })
   } catch (err) {
     console.error('[team] invite email failed:', err instanceof Error ? err.message : String(err))
     return { sent: false, reason: 'error', error: 'invite_send_failed' }

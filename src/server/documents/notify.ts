@@ -46,6 +46,8 @@ async function auditNotify(
           kind,
           to,
           sent: result.sent,
+          // Which SMTP server carried it: the org's own or the shared fallback.
+          ...(result.via ? { via: result.via } : {}),
           ...(result.sent ? {} : { reason: result.reason }),
         },
       },
@@ -55,9 +57,10 @@ async function auditNotify(
   }
 }
 
-// Send one templated email + audit it. Never throws. Returns the mailer result.
+// Send one templated email AS the document's org + audit it. Never throws.
+// Returns the mailer result.
 async function deliver(
-  documentId: string,
+  doc: { id: string; orgId: string },
   kind: string,
   to: string,
   rendered: { subject: string; html: string; text: string },
@@ -65,13 +68,13 @@ async function deliver(
 ): Promise<SendEmailResult> {
   let result: SendEmailResult
   try {
-    result = await sendEmail({ to, ...rendered, attachments })
+    result = await sendEmail({ orgId: doc.orgId, to, ...rendered, attachments })
   } catch (err) {
     // sendEmail is contractually non-throwing, but belt-and-braces here.
     console.error('[notify] deliver failed:', err instanceof Error ? err.message : String(err))
     result = { sent: false, reason: 'error', error: 'deliver_failed' }
   }
-  await auditNotify(documentId, kind, to, result)
+  await auditNotify(doc.id, kind, to, result)
   return result
 }
 
@@ -130,7 +133,7 @@ export async function notifyOnSend(documentId: string, baseUrl?: string | null):
       signUrl: signUrl(base, r.token),
       brand,
     })
-    await deliver(documentId, 'request', r.email, rendered)
+    await deliver(doc, 'request', r.email, rendered)
   }
 }
 
@@ -152,7 +155,7 @@ export async function notifyNextSequential(documentId: string, baseUrl?: string 
     signUrl: signUrl(base, next.token),
     brand: emailBrandFor(doc.org),
   })
-  await deliver(documentId, 'request', next.email, rendered)
+  await deliver(doc, 'request', next.email, rendered)
 }
 
 /**
@@ -187,7 +190,7 @@ export async function notifyCompleted(documentId: string, baseUrl?: string | nul
       attached: !!attachment,
       brand,
     })
-    await deliver(documentId, 'completed', r.email, rendered, attachment)
+    await deliver(doc, 'completed', r.email, rendered, attachment)
   }
 
   // Sender: attach + link into the app.
@@ -199,7 +202,7 @@ export async function notifyCompleted(documentId: string, baseUrl?: string | nul
       appUrl: base ? docUrl(base, documentId) : undefined,
       brand,
     })
-    await deliver(documentId, 'completed', doc.owner.email, rendered, attachment)
+    await deliver(doc, 'completed', doc.owner.email, rendered, attachment)
   }
 }
 
@@ -222,7 +225,7 @@ export async function notifyDeclined(
     appUrl: base ? docUrl(base, documentId) : undefined,
     brand: emailBrandFor(doc.org),
   })
-  await deliver(documentId, 'declined', doc.owner.email, rendered)
+  await deliver(doc, 'declined', doc.owner.email, rendered)
 }
 
 /**
@@ -251,5 +254,5 @@ export async function notifyReminder(
     reminder: true,
     brand: emailBrandFor(doc.org),
   })
-  return deliver(documentId, 'reminder', r.email, rendered)
+  return deliver(doc, 'reminder', r.email, rendered)
 }

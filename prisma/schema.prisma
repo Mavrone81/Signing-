@@ -107,16 +107,23 @@ model AuthProviderConfig {
   updatedBy String?
 }
 
-// Deployment-wide outbound email (SMTP) configuration — a SINGLETON row
-// (provider 'smtp'), managed by a platform admin via Settings → Email. Mirrors
-// AuthProviderConfig: the SMTP password is stored ENCRYPTED (AES-256-GCM via
-// src/lib/crypto.ts) in `passwordEnc` and is NEVER returned to the client. The
-// mailer (src/lib/mailer.ts) reads this row (short-TTL cached), decrypts the
-// password, and sends best-effort — a missing/disabled config is a no-op that
-// never throws into the signing/send flow.
+// Outbound email (SMTP) configuration, per organization with a shared fallback.
+//  - orgId NULL: the SHARED server, managed by a platform admin. At most one
+//    such row (enforced in src/app/(app)/settings/email/actions.ts, since a
+//    partial unique index can't be expressed here).
+//  - orgId set: that org's OWN server (at most one per org), managed by the
+//    org's owners/admins.
+// A send names the org it is sending as; it uses the org's own server when that
+// row is usable (enabled + host + port + from), otherwise the shared server, and
+// otherwise sends nothing (see src/lib/email-config.ts). The SMTP password is
+// stored ENCRYPTED (AES-256-GCM via src/lib/crypto.ts) in `passwordEnc` and is
+// NEVER returned to the client. Sends are best-effort — a missing config is a
+// no-op that never throws into the signing/send flow.
 model EmailConfig {
   id String @id
-  provider String @unique @default("smtp")
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String? @unique
+  provider String @default("smtp")
   enabled Boolean @default(false)
   host String?
   port Int?
@@ -198,6 +205,7 @@ model Organization {
   apiKeys ApiKey[]
   webhooks Webhook[]
   signingCertificates SigningCertificate[]
+  emailConfig EmailConfig?
 }
 
 // Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key

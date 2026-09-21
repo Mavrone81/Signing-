@@ -116,24 +116,26 @@ export default async function AppLayout({
                 >
                   Settings
                 </Link>
+              </>
+            )}
+            {canManageOrg && (
+              // Per-org settings: shown under the SAME predicate the pages and
+              // their server actions use (canManageOrgSettings), so a link can
+              // never hide a page an org owner is allowed to use.
+              <>
                 <Link
                   href="/settings/email"
                   className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
                 >
                   Email
                 </Link>
+                <Link
+                  href="/settings/signing"
+                  className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
+                >
+                  Signing
+                </Link>
               </>
-            )}
-            {canManageOrg && (
-              // Per-org settings: shown under the SAME predicate the page and its
-              // server actions use (canManageOrgSettings), so the link can never
-              // hide a page an org owner is allowed to use.
-              <Link
-                href="/settings/signing"
-                className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
-              >
-                Signing
-              </Link>
             )}
             <span className="hidden truncate text-[13px] text-muted sm:inline">
               {session.user.email}

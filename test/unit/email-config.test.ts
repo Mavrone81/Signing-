@@ -56,4 +56,29 @@ describe('email-config', () => {
       expect(m.emailIsConfigured(undefined)).toBe(false)
     })
   })
+
+  describe('pickEmailConfig (org server with shared fallback)', () => {
+    type Row = { enabled: boolean; host: string | null; port: number | null; fromEmail: string | null }
+    const org: Row = { enabled: true, host: 'smtp.org.com', port: 587, fromEmail: 'org@org.com' }
+    const shared: Row = { enabled: true, host: 'smtp.shared.com', port: 587, fromEmail: 'no-reply@shared.com' }
+    it('uses the org’s own server when it is usable', () => {
+      expect(m.pickEmailConfig(org, shared)).toEqual({ row: org, via: 'org' })
+    })
+    it('falls back to the shared server when the org has no row', () => {
+      expect(m.pickEmailConfig(null, shared)).toEqual({ row: shared, via: 'shared' })
+    })
+    it('falls back when the org’s server is switched off', () => {
+      expect(m.pickEmailConfig({ ...org, enabled: false }, shared)).toEqual({ row: shared, via: 'shared' })
+    })
+    it('falls back when the org’s server is incomplete', () => {
+      expect(m.pickEmailConfig({ ...org, fromEmail: null }, shared)).toEqual({ row: shared, via: 'shared' })
+    })
+    it('still uses the org’s own server when the shared one is off', () => {
+      expect(m.pickEmailConfig(org, { ...shared, enabled: false })).toEqual({ row: org, via: 'org' })
+    })
+    it('returns null when neither is usable, so nothing is sent', () => {
+      expect(m.pickEmailConfig(null, null)).toBeNull()
+      expect(m.pickEmailConfig({ ...org, enabled: false }, { ...shared, enabled: false })).toBeNull()
+    })
+  })
 })
