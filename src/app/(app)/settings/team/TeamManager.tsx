@@ -1,8 +1,14 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { startTransition, useActionState, useState } from 'react'
 import type { OrgRole } from '@prisma/client'
-import { addMemberAction, changeRoleAction, removeMemberAction, type AddMemberState } from './actions'
+import {
+  addMemberAction,
+  changeRoleAction,
+  removeMemberAction,
+  type AddMemberState,
+  type ChangeRoleState,
+} from './actions'
 import type { TeamMember } from '@/server/team/actions'
 
 const fieldClass =
@@ -13,6 +19,68 @@ function fmt(d: Date | string): string {
 }
 
 const ROLE_LABEL: Record<OrgRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' }
+
+// One member's role control. It keeps the chosen value once saved, returns to the
+// stored role if the change is refused, and reports the outcome beside it. An
+// owner is asked to confirm before demoting themselves.
+//
+// Submitted by hand (onSubmit + startTransition), NOT via <form action>: React
+// resets a form after a form action, which put the select back on its first
+// option — the "role snaps back until you refresh" bug — even when controlled.
+function RoleCell({ member, isSelf }: { member: TeamMember; isSelf: boolean }) {
+  const [choice, setChoice] = useState<OrgRole>(member.role)
+  const [state, action, pending] = useActionState<ChangeRoleState, FormData>(
+    async (prev, formData) => {
+      const res = await changeRoleAction(prev, formData)
+      if (res.status === 'error') setChoice(member.role)
+      return res
+    },
+    { status: 'idle' },
+  )
+
+  function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
+    if (isSelf && member.role === 'owner' && formData.get('role') !== 'owner') {
+      const ok = window.confirm(
+        'You are about to remove your own owner role. You will lose the ability to change roles, ' +
+          'and only another owner can give it back. Continue?',
+      )
+      if (!ok) return
+    }
+    startTransition(() => action(formData))
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-center gap-1.5">
+      <input type="hidden" name="membershipId" value={member.membershipId} />
+      <select
+        name="role"
+        value={choice}
+        onChange={(e) => setChoice(e.target.value as OrgRole)}
+        aria-label={`Role for ${member.name}`}
+        className="rounded-md border border-edge-strong bg-paper px-2 py-1 text-[13px] text-ink"
+      >
+        <option value="owner">Owner</option>
+        <option value="admin">Admin</option>
+        <option value="member">Member</option>
+      </select>
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-md border border-edge-strong px-2 py-1 text-[12px] font-medium text-ink hover:bg-shell disabled:opacity-60"
+      >
+        {pending ? 'Saving…' : 'Save'}
+      </button>
+      <span role="status" className="w-full text-[12px]">
+        {state.status === 'saved' && (
+          <span className="text-muted">Saved as {ROLE_LABEL[state.role as OrgRole] ?? state.role}.</span>
+        )}
+        {state.status === 'error' && <span className="text-danger">{state.message}</span>}
+      </span>
+    </form>
+  )
+}
 
 export function TeamManager({
   members,
@@ -72,8 +140,11 @@ export function TeamManager({
       {state.status === 'created' && (
         <div className="rounded-xl border border-brand-primary/30 bg-brand-primary/5 p-4">
           <p className="text-[13px] font-medium text-ink">
-            {state.name} ({state.email}) was added as {ROLE_LABEL[state.role as OrgRole] ?? state.role}. Share this
-            temporary password with them — it won’t be shown again. They can change it after signing in.
+            {state.reAdded
+              ? `${state.name} (${state.email}) was added back as ${ROLE_LABEL[state.role as OrgRole] ?? state.role}, with their earlier documents. `
+              : `${state.name} (${state.email}) was added as ${ROLE_LABEL[state.role as OrgRole] ?? state.role}. `}
+            Share this temporary password with them — it won’t be shown again. They can change it after
+            signing in.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <code className="break-all rounded-lg border border-edge-strong bg-paper px-3 py-2 text-[13px] text-ink">
@@ -127,17 +198,7 @@ export function TeamManager({
                     <td className="px-4 py-2.5">
                       {isOwner ? (
                         // Only an owner can change roles.
-                        <form action={changeRoleAction} className="flex items-center gap-1.5">
-                          <input type="hidden" name="membershipId" value={m.membershipId} />
-                          <select name="role" defaultValue={m.role} className="rounded-md border border-edge-strong bg-paper px-2 py-1 text-[13px] text-ink">
-                            <option value="owner">Owner</option>
-                            <option value="admin">Admin</option>
-                            <option value="member">Member</option>
-                          </select>
-                          <button type="submit" className="rounded-md border border-edge-strong px-2 py-1 text-[12px] font-medium text-ink hover:bg-shell">
-                            Save
-                          </button>
-                        </form>
+                        <RoleCell member={m} isSelf={isSelf} />
                       ) : (
                         <span className="text-ink">{ROLE_LABEL[m.role]}</span>
                       )}

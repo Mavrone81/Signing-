@@ -253,3 +253,55 @@ describe('removeMember', () => {
     expect(await prisma.user.findUnique({ where: { id: added.member.userId } })).not.toBeNull()
   })
 })
+
+describe('re-adding a removed member', () => {
+  const docIds: string[] = []
+  const mkDoc = async (ownerId: string, orgId: string) => {
+    const d = await prisma.document.create({
+      data: { ownerId, orgId, originalName: 'r.pdf', originalKey: 'k', originalSha256: 'h', pageCount: 1 },
+    })
+    docIds.push(d.id)
+    return d.id
+  }
+
+  afterAll(async () => {
+    if (docIds.length) await prisma.document.deleteMany({ where: { id: { in: docIds } } })
+  })
+
+  it('reuses the same account, as a member, with their documents intact and a fresh temp password', async () => {
+    const first = await addMember(ownerActor(), { name: 'Returner', email: u('returner') })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    userIds.push(first.member.userId)
+    const docId = await mkDoc(first.member.userId, orgA)
+    await removeMember(ownerActor(), first.member.membershipId)
+
+    const again = await addMember(ownerActor(), { name: 'Returner', email: first.member.email, role: 'admin' })
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+    expect(again.reAdded).toBe(true)
+    expect(again.member.userId).toBe(first.member.userId)
+    expect(again.member.role).toBe('member')
+    expect(again.tempPassword).not.toBe(first.tempPassword)
+    const user = await prisma.user.findUnique({ where: { id: first.member.userId } })
+    expect(await verify(user!.passwordHash!, again.tempPassword)).toBe(true)
+    expect(await prisma.document.findUnique({ where: { id: docId } })).not.toBeNull()
+    expect(await prisma.user.count({ where: { email: first.member.email } })).toBe(1)
+  })
+
+  it('a brand-new email is not reported as re-added', async () => {
+    const res = await addMember(ownerActor(), { name: 'Fresh', email: u('fresh') })
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    userIds.push(res.member.userId)
+    expect(res.reAdded).toBe(false)
+  })
+
+  it('an org-less account that owns documents in ANOTHER org → EMAIL_IN_USE, never attached', async () => {
+    const stray = await mkUser('stray')
+    await mkDoc(stray, orgB)
+    const email = (await prisma.user.findUnique({ where: { id: stray } }))!.email
+    expect(await addMember(ownerActor(), { name: 'Stray', email })).toEqual({ ok: false, error: 'EMAIL_IN_USE' })
+    expect(await prisma.membership.count({ where: { userId: stray } })).toBe(0)
+  })
+})
