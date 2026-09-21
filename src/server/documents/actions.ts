@@ -707,7 +707,9 @@ export async function sendForSignature(
   docId: string,
   actorUserId: string,
   meta: UploadMeta = {},
-  opts: { expiresInDays?: number | null; message?: unknown } = {},
+  // `notify: false` skips the per-document invitation emails — used by an
+  // envelope, which sends each signer ONE email covering all their documents.
+  opts: { expiresInDays?: number | null; message?: unknown; notify?: boolean } = {},
 ): Promise<SavedRecipient[]> {
   const doc = await prisma.document.findUnique({
     where: { id: docId },
@@ -774,7 +776,7 @@ export async function sendForSignature(
   // (all for parallel; only the first for sequential). Wrapped so an SMTP/mail
   // failure can never break the send that already committed above.
   try {
-    await notifyOnSend(docId, meta.baseUrl)
+    if (opts.notify !== false) await notifyOnSend(docId, meta.baseUrl)
   } catch (err) {
     console.error('[sendForSignature] notify failed:', err instanceof Error ? err.message : String(err))
   }

@@ -354,7 +354,7 @@ describe('deleteOrganization (empty orgs only, platform-admin only)', () => {
       data: { ownerId: user.id, orgId: id, originalName: 'k.pdf', originalKey: 'k', originalSha256: 'h', pageCount: 1 },
     })
     const res = await deleteOrganization(admin, id)
-    expect(res).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 1, templates: 0 })
+    expect(res).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 1, templates: 0, envelopes: 0 })
     expect(await prisma.organization.findUnique({ where: { id } })).not.toBeNull()
     await prisma.document.delete({ where: { id: doc.id } })
   })
@@ -364,8 +364,17 @@ describe('deleteOrganization (empty orgs only, platform-admin only)', () => {
     const t = await prisma.template.create({
       data: { orgId: id, name: 'T', storageKey: 'k', pageCount: 1, createdById: 'x' },
     })
-    expect(await deleteOrganization(admin, id)).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 0, templates: 1 })
+    expect(await deleteOrganization(admin, id)).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 0, templates: 1, envelopes: 0 })
     await prisma.template.delete({ where: { id: t.id } })
+  })
+
+  it('refuses an org holding an envelope', async () => {
+    const id = await freshOrg()
+    const user = await prisma.user.create({ data: { email: u('envowner'), name: 'E', passwordHash: 'x', role: 'user' } })
+    userIds.push(user.id)
+    const env = await prisma.envelope.create({ data: { orgId: id, ownerId: user.id, name: 'Env' } })
+    expect(await deleteOrganization(admin, id)).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 0, templates: 0, envelopes: 1 })
+    await prisma.envelope.delete({ where: { id: env.id } })
   })
 
   it('NOT_FOUND for an unknown org', async () => {
@@ -376,6 +385,6 @@ describe('deleteOrganization (empty orgs only, platform-admin only)', () => {
     const id = await freshOrg()
     const listed = await listOrganizations(admin)
     const row = listed.ok ? listed.orgs.find((o) => o.id === id) : undefined
-    expect(row).toMatchObject({ documentCount: 0, templateCount: 0 })
+    expect(row).toMatchObject({ documentCount: 0, templateCount: 0, envelopeCount: 0 })
   })
 })

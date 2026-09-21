@@ -57,6 +57,8 @@ interface EditorProps {
   initialSigningOrder: SigningOrder
   // The note used last time this document was sent (null = none/never sent).
   initialInviteMessage?: string | null
+  // The envelope this document belongs to, if any — the back link returns there.
+  envelopeId?: string | null
 }
 
 const SENT_STATUSES = new Set(['sent', 'completed', 'declined'])
@@ -106,6 +108,7 @@ export function Editor({
   initialRecipients,
   initialSigningOrder,
   initialInviteMessage = null,
+  envelopeId = null,
 }: EditorProps) {
   const [data, setData] = useState<ArrayBuffer | null>(null)
   // The document's current file name (changes when the PDF is replaced) and a
@@ -612,7 +615,7 @@ export function Editor({
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
-        href="/documents"
+        href={envelopeId ? `/envelopes/${envelopeId}` : "/documents"}
         className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink"
         onClick={(e) => {
           if (
@@ -624,7 +627,7 @@ export function Editor({
           }
         }}
       >
-        <span aria-hidden>←</span> Back to documents
+        <span aria-hidden>←</span> {envelopeId ? "Back to envelope" : "Back to documents"}
       </Link>
       <PageHeader
         title={docName}

@@ -81,6 +81,7 @@ export interface PlatformOrg {
   // What the org still holds. Only an org holding nothing can be deleted.
   documentCount: number
   templateCount: number
+  envelopeCount: number
   ownerEmails: string[]
   members: PlatformOrgMember[]
   createdAt: Date
@@ -111,7 +112,7 @@ export async function listOrganizations(actor: PlatformActor): Promise<ListOrgan
       name: true,
       slug: true,
       createdAt: true,
-      _count: { select: { documents: true, templates: true } },
+      _count: { select: { documents: true, templates: true, envelopes: true } },
       // Full roster per org — never selects passwordHash. Ordering matches
       // src/server/team/actions.ts `listMembers` (owners→admins→members,
       // oldest-first within each group).
@@ -145,6 +146,7 @@ export async function listOrganizations(actor: PlatformActor): Promise<ListOrgan
         memberCount: members.length,
         documentCount: o._count.documents,
         templateCount: o._count.templates,
+        envelopeCount: o._count.envelopes,
         ownerEmails: members.filter((m) => m.role === 'owner').map((m) => m.email),
         members,
         createdAt: o.createdAt,
@@ -158,11 +160,11 @@ export async function listOrganizations(actor: PlatformActor): Promise<ListOrgan
 export type DeleteOrganizationResult =
   | { ok: true }
   | { ok: false; error: 'FORBIDDEN' | 'NOT_FOUND' }
-  | { ok: false; error: 'NOT_EMPTY'; documents: number; templates: number }
+  | { ok: false; error: 'NOT_EMPTY'; documents: number; templates: number; envelopes: number }
 
 /**
- * Delete an organization that holds nothing: no documents and no templates.
- * Platform-admin only. An org holding either is refused (NOT_EMPTY, with the
+ * Delete an organization that holds nothing: no documents, templates or
+ * envelopes. Platform-admin only. An org holding any is refused (NOT_EMPTY, with the
  * counts) and left untouched — this is for clearing out a mistaken or unused
  * org, never for deleting anyone's records.
  *
@@ -181,13 +183,13 @@ export async function deleteOrganization(actor: PlatformActor, orgId: string): P
       select: {
         logoKey: true,
         signingCertificates: { select: { p12Key: true } },
-        _count: { select: { documents: true, templates: true } },
+        _count: { select: { documents: true, templates: true, envelopes: true } },
       },
     })
     if (!org) return { ok: false as const, error: 'NOT_FOUND' as const }
-    const { documents, templates } = org._count
-    if (documents > 0 || templates > 0) {
-      return { ok: false as const, error: 'NOT_EMPTY' as const, documents, templates }
+    const { documents, templates, envelopes } = org._count
+    if (documents > 0 || templates > 0 || envelopes > 0) {
+      return { ok: false as const, error: 'NOT_EMPTY' as const, documents, templates, envelopes }
     }
     await tx.organization.delete({ where: { id: orgId } })
     return { ok: true as const, blobs: [org.logoKey, ...org.signingCertificates.map((c) => c.p12Key)] }

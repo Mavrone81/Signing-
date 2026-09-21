@@ -69,6 +69,12 @@ export default async function AppLayout({
               Documents
             </Link>
             <Link
+              href="/envelopes"
+              className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
+            >
+              Envelopes
+            </Link>
+            <Link
               href="/templates"
               className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
             >

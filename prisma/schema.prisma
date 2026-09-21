@@ -88,6 +88,7 @@ model User {
   totpSecret String?
   documents Document[]
   memberships Membership[]
+  envelopes Envelope[]
   createdAt DateTime @default(now())
 }
 
@@ -161,7 +162,7 @@ model SigningCertificate {
   orgId String
   // One active cert per org; saving a new one deactivates that org's others.
   active Boolean @default(true)
-  // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<id>.p12").
+  // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<orgId>/<id>.p12").
   p12Key String
   // AES-256-GCM encrypted (base64) P12 passphrase — NEVER returned to a client.
   passphraseEnc String
@@ -206,6 +207,7 @@ model Organization {
   webhooks Webhook[]
   signingCertificates SigningCertificate[]
   emailConfig EmailConfig?
+  envelopes Envelope[]
 }
 
 // Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key
@@ -304,12 +306,51 @@ model Document {
   // Null = no note. Kept after sending so an amended re-send is pre-filled with
   // it. See src/lib/invite-message.ts.
   inviteMessage String?
+  // The envelope this document is sent in, if any (see Envelope). SetNull: an
+  // envelope going away never takes its documents with it.
+  envelope Envelope? @relation(fields: [envelopeId], references: [id], onDelete: SetNull)
+  envelopeId String?
   fields Field[]
   recipients Recipient[]
   audit AuditEvent[]
   createdAt DateTime @default(now())
   signedAt DateTime?
 }
+// An envelope groups several documents that go to the same people together.
+// It is deliberately THIN: each document keeps its own recipients, fields,
+// finalize and signed file, and the envelope never stores a status — it is
+// derived from its documents (src/lib/envelopes.ts). Owner-only, like documents:
+// only the person who created it, in its org, can see or send it.
+model Envelope {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id])
+  orgId String
+  owner User @relation(fields: [ownerId], references: [id])
+  ownerId String
+  name String
+  // The sender's note for the one invitation each signer receives.
+  inviteMessage String?
+  documents Document[]
+  signers EnvelopeSigner[]
+  createdAt DateTime @default(now())
+  @@index([orgId, ownerId])
+}
+
+// One person signing in an envelope. `token` is their single link (/e/<token>)
+// listing every document in the envelope they are a recipient of; each entry
+// hands off to the unchanged per-document signing flow (/sign/<token>).
+model EnvelopeSigner {
+  id String @id @default(cuid())
+  envelope Envelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+  envelopeId String
+  email String
+  name String
+  orderIndex Int @default(0)
+  token String @unique
+  createdAt DateTime @default(now())
+  @@unique([envelopeId, email])
+}
+
 model Field {
   id String @id @default(cuid())
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)

@@ -79,6 +79,7 @@ export default async function EditDocumentPage({
       initialRecipients={initialRecipients}
       initialSigningOrder={doc.signingOrder as SigningOrder}
       initialInviteMessage={doc.inviteMessage}
+      envelopeId={doc.envelopeId}
     />
   )
 }

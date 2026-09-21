@@ -46,7 +46,7 @@ function RoleBadge({ role }: { role: string }) {
 // server re-checks and refuses otherwise); asks for confirmation first.
 function DeleteOrgCell({ org }: { org: PlatformOrg }) {
   const [state, action, pending] = useActionState<DeleteOrgState, FormData>(deleteOrgAction, { status: 'idle' })
-  const empty = org.documentCount === 0 && org.templateCount === 0
+  const empty = org.documentCount === 0 && org.templateCount === 0 && org.envelopeCount === 0
   if (!empty) {
     return <span className="text-[12px] text-muted">Holds records</span>
   }
