@@ -78,6 +78,7 @@ export default async function EditDocumentPage({
       initialFields={initialFields}
       initialRecipients={initialRecipients}
       initialSigningOrder={doc.signingOrder as SigningOrder}
+      initialInviteMessage={doc.inviteMessage}
     />
   )
 }

@@ -300,6 +300,10 @@ model Document {
   // `expired`), and the dashboard flags a non-completed doc past its expiry. No
   // background job — a doc is simply un-signable once expired. Null = no expiry.
   expiresAt DateTime?
+  // The sender's personal note in the signing invitation (and its reminders).
+  // Null = no note. Kept after sending so an amended re-send is pre-filled with
+  // it. See src/lib/invite-message.ts.
+  inviteMessage String?
   fields Field[]
   recipients Recipient[]
   audit AuditEvent[]

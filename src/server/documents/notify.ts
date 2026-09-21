@@ -131,6 +131,7 @@ export async function notifyOnSend(documentId: string, baseUrl?: string | null):
       senderName,
       docName: doc.originalName,
       signUrl: signUrl(base, r.token),
+      message: doc.inviteMessage,
       brand,
     })
     await deliver(doc, 'request', r.email, rendered)
@@ -153,6 +154,7 @@ export async function notifyNextSequential(documentId: string, baseUrl?: string 
     senderName: doc.owner?.name ?? 'A sender',
     docName: doc.originalName,
     signUrl: signUrl(base, next.token),
+    message: doc.inviteMessage,
     brand: emailBrandFor(doc.org),
   })
   await deliver(doc, 'request', next.email, rendered)
@@ -252,6 +254,7 @@ export async function notifyReminder(
     docName: doc.originalName,
     signUrl: signUrl(base, r.token),
     reminder: true,
+    message: doc.inviteMessage,
     brand: emailBrandFor(doc.org),
   })
   return deliver(doc, 'reminder', r.email, rendered)

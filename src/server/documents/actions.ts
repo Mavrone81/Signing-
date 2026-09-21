@@ -13,6 +13,7 @@ import { notifyOnSend } from '@/server/documents/notify'
 import { emitDocumentSent } from '@/server/documents/webhook-events'
 import { canAccessDocument } from '@/lib/rbac'
 import { env } from '@/env'
+import { normalizeInviteMessage } from '@/lib/invite-message'
 
 const PDF_MAGIC = '%PDF-'
 
@@ -35,13 +36,9 @@ export interface UploadMeta {
  *  - Error('INVALID_PDF') — missing `%PDF-` magic bytes, or pdf-lib can't
  *                           parse the file (e.g. corrupt/truncated PDF)
  */
-export async function createDocument(
-  ownerId: string,
-  orgId: string,
-  name: string,
-  bytes: Buffer,
-  meta: UploadMeta = {}
-): Promise<{ id: string; pageCount: number }> {
+// Validate an uploaded PDF and read what the database records about it. Throws
+// TOO_LARGE / INVALID_PDF before anything is written anywhere.
+async function inspectPdf(bytes: Buffer): Promise<{ pageCount: number; sha256: string }> {
   const maxBytes = env.MAX_UPLOAD_MB * 1024 * 1024
   if (bytes.length > maxBytes) throw new Error('TOO_LARGE')
 
@@ -56,8 +53,17 @@ export async function createDocument(
   } catch {
     throw new Error('INVALID_PDF')
   }
+  return { pageCount, sha256: sha256hex(bytes) }
+}
 
-  const originalSha256 = sha256hex(bytes)
+export async function createDocument(
+  ownerId: string,
+  orgId: string,
+  name: string,
+  bytes: Buffer,
+  meta: UploadMeta = {}
+): Promise<{ id: string; pageCount: number }> {
+  const { pageCount, sha256: originalSha256 } = await inspectPdf(bytes)
   const id = randomUUID()
   const originalKey = `${id}/original.pdf`
 
@@ -95,6 +101,74 @@ export async function createDocument(
   })
 
   return { id: doc.id, pageCount }
+}
+
+/**
+ * Replace a DRAFT document's PDF with a new file, keeping its recipients (and
+ * their signing order) so the sender doesn't have to set them up again.
+ *
+ * Placed fields are kept where their page still exists; fields on pages the new
+ * file doesn't have are removed, and their count is returned so the editor can
+ * say so. The new file is validated exactly like an upload before anything is
+ * written, stored under a NEW key (so a failure never leaves the row pointing at
+ * a half-replaced blob), and the old blob is removed only after the row commits.
+ * The replacement is audited with the previous file's name and hash.
+ *
+ * Throws NOT_FOUND, NOT_DRAFT (409 — sent/signed documents are immutable),
+ * TOO_LARGE, INVALID_PDF. Authorization (canAccessDocument) is the caller's.
+ */
+export async function replaceDocumentFile(
+  docId: string,
+  actorUserId: string,
+  name: string,
+  bytes: Buffer,
+  meta: UploadMeta = {},
+): Promise<{ pageCount: number; removedFields: number }> {
+  const doc = await prisma.document.findUnique({ where: { id: docId } })
+  if (!doc) throw new Error('NOT_FOUND')
+  if (doc.status !== DocStatus.draft) throw new Error('NOT_DRAFT')
+
+  const { pageCount, sha256 } = await inspectPdf(bytes)
+  const newKey = `${docId}/original-${randomUUID()}.pdf`
+  await putObject(newKey, bytes)
+
+  let removedFields: number
+  try {
+    removedFields = await prisma.$transaction(async (tx) => {
+      // Re-check inside the transaction: a send in between must win.
+      const current = await tx.document.findUnique({ where: { id: docId }, select: { status: true } })
+      if (!current || current.status !== DocStatus.draft) throw new Error('NOT_DRAFT')
+      const removed = await tx.field.deleteMany({ where: { documentId: docId, page: { gt: pageCount } } })
+      await tx.document.update({
+        where: { id: docId },
+        data: { originalName: name, originalKey: newKey, originalSha256: sha256, pageCount },
+      })
+      await tx.auditEvent.create({
+        data: {
+          documentId: docId,
+          userId: actorUserId,
+          action: AuditAction.upload,
+          ip: meta.ip ?? null,
+          userAgent: meta.userAgent ?? null,
+          detail: {
+            replaced: true,
+            previousName: doc.originalName,
+            previousSha256: doc.originalSha256,
+            removedFields: removed.count,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      return removed.count
+    })
+  } catch (err) {
+    await deleteObject(newKey).catch(() => {})
+    throw err
+  }
+
+  await deleteObject(doc.originalKey).catch((err) => {
+    console.error('[documents] could not remove the replaced PDF blob:', err instanceof Error ? err.message : String(err))
+  })
+  return { pageCount, removedFields }
 }
 
 const FIELD_TYPES: ReadonlySet<string> = new Set([
@@ -633,7 +707,7 @@ export async function sendForSignature(
   docId: string,
   actorUserId: string,
   meta: UploadMeta = {},
-  opts: { expiresInDays?: number | null } = {},
+  opts: { expiresInDays?: number | null; message?: unknown } = {},
 ): Promise<SavedRecipient[]> {
   const doc = await prisma.document.findUnique({
     where: { id: docId },
@@ -675,7 +749,14 @@ export async function sendForSignature(
     }
     await tx.document.update({
       where: { id: docId },
-      data: { status: DocStatus.sent, sentAt: new Date(), expiresAt },
+      // The sender's note travels with the document so reminders repeat it and
+      // an amended re-send is pre-filled with it. Omitted = keep what's stored.
+      data: {
+        status: DocStatus.sent,
+        sentAt: new Date(),
+        expiresAt,
+        ...(opts.message !== undefined ? { inviteMessage: normalizeInviteMessage(opts.message) } : {}),
+      },
     })
     await tx.auditEvent.create({
       data: {
