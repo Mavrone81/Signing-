@@ -1,14 +1,20 @@
 import type { Document, Recipient } from '@prisma/client'
 import { prisma } from '@/lib/db'
 
-// Tenant-scoped document load for the public API. Returns the document ONLY when
-// it belongs to `orgId` — a document in any other org resolves to `null` (the
-// route maps that to 404), so an org-A key can never observe an org-B document's
-// existence. This is the single choke point for `/api/v1` document access.
-export async function loadOrgDocument(orgId: string, id: string): Promise<Document | null> {
+// Document load for the public API — the single choke point for `/api/v1`
+// document access. A key acts as the user who created it, so it gets exactly
+// that user's in-app access (owner-only, see canAccessDocument): documents in
+// the key's org that its creator uploaded. Anything else resolves to `null`
+// (the route maps that to 404), so a key can never observe another tenant's
+// document — or a colleague's, which would otherwise let an org admin mint a
+// key to get around the owner-only rule.
+export async function loadOrgDocument(
+  ctx: { orgId: string; actorUserId: string },
+  id: string,
+): Promise<Document | null> {
   if (!id || typeof id !== 'string') return null
   const doc = await prisma.document.findUnique({ where: { id } })
-  if (!doc || doc.orgId !== orgId) return null
+  if (!doc || doc.orgId !== ctx.orgId || doc.ownerId !== ctx.actorUserId) return null
   return doc
 }
 

@@ -18,10 +18,10 @@ function baseUrl(req: NextRequest): string {
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authenticateApiKey(req)
   if (!auth.ok) return auth.response
-  const { orgId, actorUserId } = auth.ctx
+  const { actorUserId } = auth.ctx
 
   const { id } = await params
-  const doc = await loadOrgDocument(orgId, id)
+  const doc = await loadOrgDocument(auth.ctx, id)
   if (!doc) return apiError('NOT_FOUND', 404)
 
   let expiresInDays: number | null = null

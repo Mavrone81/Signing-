@@ -656,15 +656,26 @@ describe('GET /api/documents', () => {
     expect(ids).not.toContain(otherDocId)
   })
 
-  it('an admin sees all documents', async () => {
+  it('an org owner or admin also sees only their own documents (owner-only)', async () => {
+    for (const orgRole of ['owner', 'admin'] as const) {
+      authMock.session = { user: { id: otherUid, role: 'admin', orgId, orgRole } }
+      const { GET } = await import('../../src/app/api/documents/route')
+      const res = await GET()
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      const ids: string[] = body.documents.map((d: { id: string }) => d.id)
+      expect(ids).toContain(otherDocId)
+      expect(ids).not.toContain(ownDocId)
+    }
+  })
+
+  it('an org admin cannot open a colleague’s document file', async () => {
     authMock.session = { user: { id: otherUid, role: 'admin', orgId, orgRole: 'admin' } }
-    const { GET } = await import('../../src/app/api/documents/route')
-    const res = await GET()
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    const ids: string[] = body.documents.map((d: { id: string }) => d.id)
-    expect(ids).toContain(ownDocId)
-    expect(ids).toContain(otherDocId)
+    const { GET } = await import('../../src/app/api/documents/[id]/file/[kind]/route')
+    const res = await GET(new Request('http://t/') as never, {
+      params: Promise.resolve({ id: ownDocId, kind: 'original' }),
+    } as never)
+    expect(res.status).toBe(403)
   })
 })
 
@@ -1155,7 +1166,7 @@ describe('deleteDocument', () => {
     await expect(getObject(signedKey!)).rejects.toThrow()
   })
 
-  it('an org owner/admin may delete another member’s document', async () => {
+  it('refuses an org owner deleting another member’s document (owner-only: NOT_FOUND, doc untouched)', async () => {
     const owner = await prisma.user.create({ data: { email: 'delowner' + Date.now() + '@x.com', name: 'Owner', passwordHash: 'x', role: 'user' } })
     userIds.push(owner.id)
     await prisma.membership.create({ data: { orgId, userId: owner.id, role: 'owner' } })
@@ -1163,8 +1174,8 @@ describe('deleteDocument', () => {
     const { id } = await createDocument(uid, orgId, 'del-by-admin.pdf', await samplePdfBytes())
     documentIds.push(id)
 
-    await deleteDocument(id, { id: owner.id, orgId, orgRole: 'owner' })
-    expect(await prisma.document.findUnique({ where: { id } })).toBeNull()
+    await expect(deleteDocument(id, { id: owner.id, orgId, orgRole: 'owner' })).rejects.toThrow('NOT_FOUND')
+    expect(await prisma.document.findUnique({ where: { id } })).not.toBeNull()
   })
 
   it('refuses a same-org member deleting another member’s document (NOT_FOUND, doc untouched)', async () => {
@@ -1285,7 +1296,7 @@ describe('DELETE /api/documents/[id]', () => {
     await expect(getObject(originalKey)).rejects.toThrow()
   })
 
-  it('200s for an org admin deleting a document owned by another member', async () => {
+  it('404s an org admin deleting a document owned by another member (owner-only)', async () => {
     const admin = await prisma.user.create({ data: { email: 'delrouteadmin' + Date.now() + '@x.com', name: 'Admin', passwordHash: 'x', role: 'user' } })
     userIds.push(admin.id)
     await prisma.membership.create({ data: { orgId, userId: admin.id, role: 'admin' } })
@@ -1296,7 +1307,7 @@ describe('DELETE /api/documents/[id]', () => {
     const { DELETE } = await import('../../src/app/api/documents/[id]/route')
     const req = new Request(`http://localhost/api/documents/${id}`, { method: 'DELETE' })
     const res = await DELETE(req as unknown as Parameters<typeof DELETE>[0], { params: Promise.resolve({ id }) })
-    expect(res.status).toBe(200)
-    expect(await prisma.document.findUnique({ where: { id } })).toBeNull()
+    expect(res.status).toBe(404)
+    expect(await prisma.document.findUnique({ where: { id } })).not.toBeNull()
   })
 })

@@ -382,8 +382,8 @@ export async function resetToDraft(docId: string, actorUserId: string): Promise<
  * caller decides whether that's appropriate (the UI warns before deleting a
  * `sent` document, since its recipients' signing links stop working).
  *
- * Authorization is `canAccessDocument`: a plain member may delete only their
- * OWN document; an org owner/admin may delete any document in their org.
+ * Authorization is `canAccessDocument`: only the uploader may delete a document
+ * (owner-only — org owners/admins get no override).
  * A missing document AND an unauthorized one (same-org non-owner, or a
  * different org entirely) are indistinguishable to the caller — both throw
  * NOT_FOUND — so the error can never be used to learn whether a document a
