@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/db'
 import { uid } from '@/lib/uid'
-import { isPlatformAdmin } from '@/lib/auth-providers'
+import { canManageOrgSettings } from '@/lib/org-settings'
 import { putObject, deleteObject } from '@/lib/storage'
 import { encryptSecret, invalidateSigningCache } from '@/lib/signing-config'
 import { generateSelfSignedP12, parseP12Metadata, type CertMetadata } from '@/lib/pki'
@@ -15,10 +15,21 @@ import { generateSelfSignedP12, parseP12Metadata, type CertMetadata } from '@/li
 // few KB; this only guards against accidental/huge uploads).
 const MAX_P12_BYTES = 512 * 1024
 
-// Persist a freshly-built platform signing identity: encrypt-store the P12 blob
-// + passphrase, deactivate any previous cert, and create the new active row.
-// Shared by the self-signed + upload paths. Secrets NEVER touch a log.
+// Every action re-checks the org-settings gate itself (never trusting that the
+// page gated it) and takes the org from the SESSION, never from the form, so one
+// org's admin cannot write another org's certificate by editing a field.
+async function requireOrgManager(): Promise<{ orgId: string; userId: string }> {
+  const session = await auth()
+  const user = session?.user
+  if (!canManageOrgSettings(user)) redirect('/documents')
+  return { orgId: user.orgId, userId: session!.user.id }
+}
+
+// Persist a freshly-built signing identity for ONE org: encrypt-store the P12
+// blob + passphrase, deactivate that org's previous cert, and create the new
+// active row. Shared by the self-signed + upload paths. Secrets NEVER touch a log.
 async function persistSigningCertificate(opts: {
+  orgId: string
   p12: Buffer
   passphrase: string
   metadata: CertMetadata
@@ -27,16 +38,21 @@ async function persistSigningCertificate(opts: {
   actorId: string
 }): Promise<void> {
   const id = uid()
-  const p12Key = `signing/${id}.p12`
+  const p12Key = `signing/${opts.orgId}/${id}.p12`
   // The blob store encrypts at rest (AES-256-GCM / DATA_KEY).
   await putObject(p12Key, opts.p12)
 
   await prisma.$transaction([
-    // Only one active platform cert at a time.
-    prisma.signingCertificate.updateMany({ where: { active: true }, data: { active: false } }),
+    // One active cert per org. The org filter is essential: without it, saving
+    // a cert here would silently deactivate every other org's.
+    prisma.signingCertificate.updateMany({
+      where: { orgId: opts.orgId, active: true },
+      data: { active: false },
+    }),
     prisma.signingCertificate.create({
       data: {
         id,
+        orgId: opts.orgId,
         active: true,
         p12Key,
         passphraseEnc: encryptSecret(opts.passphrase),
@@ -53,7 +69,7 @@ async function persistSigningCertificate(opts: {
     }),
   ])
 
-  invalidateSigningCache()
+  invalidateSigningCache(opts.orgId)
   revalidatePath('/settings/signing')
 }
 
@@ -64,12 +80,18 @@ function cleanTsa(raw: string): string | null {
   return v
 }
 
-// Generate + activate an RSA-2048 self-signed platform certificate. A random
-// passphrase is minted server-side (the admin never needs it — the P12 is only
-// ever read by the finalize pipeline). Platform-admin gated.
+function activeCertOf(orgId: string) {
+  return prisma.signingCertificate.findFirst({
+    where: { orgId, active: true },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+// Generate + activate an RSA-2048 self-signed certificate for the caller's org.
+// A random passphrase is minted server-side (nobody needs it — the P12 is only
+// ever read by the finalize pipeline).
 export async function generatePlatformCertificate(formData: FormData): Promise<void> {
-  const session = await auth()
-  if (!isPlatformAdmin(session)) redirect('/documents')
+  const { orgId, userId } = await requireOrgManager()
 
   const commonName = String(formData.get('commonName') ?? '').trim() || 'Bevora Sign'
   const yearsRaw = Number.parseInt(String(formData.get('years') ?? ''), 10)
@@ -80,22 +102,22 @@ export async function generatePlatformCertificate(formData: FormData): Promise<v
   const { p12, metadata } = generateSelfSignedP12({ commonName, passphrase, years })
 
   await persistSigningCertificate({
+    orgId,
     p12,
     passphrase,
     metadata,
     origin: 'self-signed',
     tsaUrl,
-    actorId: session!.user.id,
+    actorId: userId,
   })
   redirect('/settings/signing?saved=generated')
 }
 
-// Upload + activate an admin-supplied PKCS#12 (.p12/.pfx). The passphrase is
-// validated by parsing the P12 (wrong passphrase → parse throws → error param).
-// Platform-admin gated.
+// Upload + activate an admin-supplied PKCS#12 (.p12/.pfx) for the caller's org.
+// The passphrase is validated by parsing the P12 (wrong passphrase → parse
+// throws → error param).
 export async function uploadPlatformCertificate(formData: FormData): Promise<void> {
-  const session = await auth()
-  if (!isPlatformAdmin(session)) redirect('/documents')
+  const { orgId, userId } = await requireOrgManager()
 
   const file = formData.get('p12')
   const passphrase = String(formData.get('passphrase') ?? '')
@@ -115,49 +137,42 @@ export async function uploadPlatformCertificate(formData: FormData): Promise<voi
   }
 
   await persistSigningCertificate({
+    orgId,
     p12,
     passphrase,
     metadata,
     origin: 'uploaded',
     tsaUrl,
-    actorId: session!.user.id,
+    actorId: userId,
   })
   redirect('/settings/signing?saved=uploaded')
 }
 
-// Update just the RFC-3161 TSA URL on the active cert (leave blank to clear).
+// Update just the RFC-3161 TSA URL on the org's active cert (blank clears it).
 export async function saveTsaUrl(formData: FormData): Promise<void> {
-  const session = await auth()
-  if (!isPlatformAdmin(session)) redirect('/documents')
+  const { orgId } = await requireOrgManager()
 
   const tsaUrl = cleanTsa(String(formData.get('tsaUrl') ?? ''))
-  const active = await prisma.signingCertificate.findFirst({
-    where: { active: true },
-    orderBy: { createdAt: 'desc' },
-  })
+  const active = await activeCertOf(orgId)
   if (!active) redirect('/settings/signing?error=notconfigured')
   await prisma.signingCertificate.update({ where: { id: active!.id }, data: { tsaUrl } })
 
-  invalidateSigningCache()
+  invalidateSigningCache(orgId)
   revalidatePath('/settings/signing')
   redirect('/settings/signing?saved=tsa')
 }
 
-// Deactivate + remove the active platform cert (and its encrypted blob).
-// Finalize reverts to the flatten-only path — no seal. Platform-admin gated.
+// Deactivate + remove the org's active cert (and its encrypted blob). The org's
+// finalize reverts to the flatten-only path — no seal.
 export async function removePlatformCertificate(): Promise<void> {
-  const session = await auth()
-  if (!isPlatformAdmin(session)) redirect('/documents')
+  const { orgId } = await requireOrgManager()
 
-  const active = await prisma.signingCertificate.findFirst({
-    where: { active: true },
-    orderBy: { createdAt: 'desc' },
-  })
+  const active = await activeCertOf(orgId)
   if (active) {
     await deleteObject(active.p12Key)
     await prisma.signingCertificate.delete({ where: { id: active.id } })
   }
-  invalidateSigningCache()
+  invalidateSigningCache(orgId)
   revalidatePath('/settings/signing')
   redirect('/settings/signing?saved=removed')
 }

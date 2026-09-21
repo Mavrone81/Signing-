@@ -305,10 +305,10 @@ export async function finalize(
   })
 
   // PAdES/PKI seal — the LAST finalize step. "Activate when configured": if a
-  // platform signing cert is active, the completed PDF (flattened + certificate
+  // document's org has an active signing cert, the completed PDF (flattened + certificate
   // page) is sealed with a detached CMS signature (ETSI.CAdES.detached,
   // whole-file ByteRange); otherwise the bytes pass through UNCHANGED.
-  const sealed = await maybePadesSign(finalBytes)
+  const sealed = await maybePadesSign(finalBytes, doc.orgId)
 
   const signedKey = `${docId}/signed.pdf`
   // Store the encrypted signed blob before the DB update, so a failure here
@@ -487,10 +487,10 @@ export async function finalizeSentDocument(
   })
 
   // PAdES/PKI seal — the LAST finalize step. "Activate when configured": if a
-  // platform signing cert is active, the completed PDF is sealed with a detached
+  // document's org has an active signing cert, the completed PDF is sealed with a detached
   // CMS signature (ETSI.CAdES.detached, whole-file ByteRange); otherwise the
   // bytes pass through UNCHANGED (byte-identical to the flatten-only path).
-  const sealed = await maybePadesSign(finalBytes)
+  const sealed = await maybePadesSign(finalBytes, doc.orgId)
 
   const signedKey = `${docId}/signed.pdf`
   // Store the encrypted signed blob before the DB update (see finalize()).

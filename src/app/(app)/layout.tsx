@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { prisma } from "@/lib/db";
 import { resolveBrand } from "@/lib/branding";
+import { canManageOrgSettings } from "@/lib/org-settings";
 import { BevoraSignMark, BevoraSignWordmark } from "@/components/brand/BevoraSignMark";
 
 // Shared shell for all authed pages (only `/documents` today; `/documents/[id]/edit`
@@ -20,6 +21,7 @@ export default async function AppLayout({
   // the product identity). A `null` org (no membership) degrades to no chip.
   const orgRole = session.user.orgRole;
   const canEditBranding = orgRole === "owner" || orgRole === "admin";
+  const canManageOrg = canManageOrgSettings(session.user);
   const org = session.user.orgId
     ? await prisma.organization.findUnique({
         where: { id: session.user.orgId },
@@ -120,13 +122,18 @@ export default async function AppLayout({
                 >
                   Email
                 </Link>
-                <Link
-                  href="/settings/signing"
-                  className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
-                >
-                  Signing
-                </Link>
               </>
+            )}
+            {canManageOrg && (
+              // Per-org settings: shown under the SAME predicate the page and its
+              // server actions use (canManageOrgSettings), so the link can never
+              // hide a page an org owner is allowed to use.
+              <Link
+                href="/settings/signing"
+                className="text-[13px] font-medium text-ink transition-colors hover:text-brand-primary"
+              >
+                Signing
+              </Link>
             )}
             <span className="hidden truncate text-[13px] text-muted sm:inline">
               {session.user.email}

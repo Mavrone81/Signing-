@@ -129,27 +129,30 @@ model EmailConfig {
   updatedBy String?
 }
 
-// PAdES/PKI digital signing — the deployment-wide PLATFORM signing identity
-// (a SINGLETON active row). When configured, the completed/flattened PDF is
-// sealed with a PAdES-compliant detached CMS signature (subfilter
-// ETSI.CAdES.detached, whole-file ByteRange) as the last finalize step; when no
-// active row exists, finalize behaves EXACTLY as before (flatten-only, no seal).
+// PAdES/PKI digital signing — each ORGANIZATION's own signing identity. When an
+// org has an active certificate, its completed/flattened PDFs are sealed with a
+// PAdES-compliant detached CMS signature (subfilter ETSI.CAdES.detached,
+// whole-file ByteRange) as the last finalize step; when it has none, finalize
+// behaves EXACTLY as before (flatten-only, no seal). There is deliberately no
+// fallback to another org's certificate: a seal attests which tenant finalized
+// the document, so one org's key must never seal another org's documents.
 //
-// This is a PLATFORM-LEVEL seal by design: the same certificate seals every
-// org's completed documents (it attests "this PDF was finalized, unaltered, by
-// this Bevora Sign deployment" — NOT the identity of any signer or tenant). It
-// therefore carries no tenant data and cannot leak one org's data into another.
+// Rows are NOT unique per org: replaced certificates are kept (inactive) for
+// audit, and only one per org is active. Lookups are always "this org's active
+// certificate", hence the composite (orgId, active) index.
 //
 // SECRET MATERIAL AT REST: the PKCS#12 (key + cert chain) is written to the
 // encrypted blob store under `p12Key` (AES-256-GCM via DATA_KEY, same as every
 // other blob) and the P12 passphrase is stored AES-256-GCM encrypted in
 // `passphraseEnc`. Neither the key, the P12 bytes, nor the passphrase is ever
 // returned by any API/settings GET or written to any log — only the non-secret
-// certificate metadata below is surfaced. Managed by a platform admin via
-// Settings → Signing (mirrors AuthProviderConfig / EmailConfig).
+// certificate metadata below is surfaced. Managed by the org's owners/admins
+// (and platform admins) via Settings → Signing.
 model SigningCertificate {
   id String @id
-  // One active platform cert at a time; saving a new one deactivates the rest.
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  // One active cert per org; saving a new one deactivates that org's others.
   active Boolean @default(true)
   // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<id>.p12").
   p12Key String
@@ -170,7 +173,7 @@ model SigningCertificate {
   origin String @default("uploaded")
   createdAt DateTime @default(now())
   createdBy String?
-  @@index([active])
+  @@index([orgId, active])
 }
 
 model Organization {
@@ -194,6 +197,7 @@ model Organization {
   templates Template[]
   apiKeys ApiKey[]
   webhooks Webhook[]
+  signingCertificates SigningCertificate[]
 }
 
 // Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key
