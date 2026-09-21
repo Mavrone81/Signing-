@@ -4,8 +4,10 @@ import { useActionState, useState } from 'react'
 import {
   createOrgAction,
   createUserAction,
+  deleteOrgAction,
   type CreateOrgState,
   type CreateUserState,
+  type DeleteOrgState,
 } from './actions'
 import type { PlatformOrg } from '@/server/platform/actions'
 
@@ -40,6 +42,35 @@ function RoleBadge({ role }: { role: string }) {
 
 // Reusable one-time temp-password panel (copy-to-clipboard). Mirrors the Team
 // page: the password is shown ONCE and never returned again by any read.
+// Delete control for one org. Offered only when the org holds nothing (the
+// server re-checks and refuses otherwise); asks for confirmation first.
+function DeleteOrgCell({ org }: { org: PlatformOrg }) {
+  const [state, action, pending] = useActionState<DeleteOrgState, FormData>(deleteOrgAction, { status: 'idle' })
+  const empty = org.documentCount === 0 && org.templateCount === 0
+  if (!empty) {
+    return <span className="text-[12px] text-muted">Holds records</span>
+  }
+  return (
+    <form
+      action={action}
+      onSubmit={(e) => {
+        const who = org.memberCount ? ` Its ${org.memberCount} member account(s) stay, without this organization.` : ''
+        if (!window.confirm(`Delete “${org.name}”? This can’t be undone.${who}`)) e.preventDefault()
+      }}
+    >
+      <input type="hidden" name="orgId" value={org.id} />
+      <button type="submit" disabled={pending} className="text-[13px] font-medium text-danger hover:underline disabled:opacity-60">
+        {pending ? 'Deleting…' : 'Delete'}
+      </button>
+      {state.status === 'error' && (
+        <p role="alert" className="mt-1 max-w-[220px] text-[12px] text-danger">
+          {state.message}
+        </p>
+      )}
+    </form>
+  )
+}
+
 function TempPasswordPanel({
   heading,
   tempPassword,
@@ -263,12 +294,13 @@ export function OrganizationsManager({
                 <th className="px-4 py-2.5 font-medium">Owner(s)</th>
                 <th className="px-4 py-2.5 font-medium">Members</th>
                 <th className="px-4 py-2.5 font-medium">Created</th>
+                <th className="px-4 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {orgs.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-4 text-muted">
+                  <td colSpan={6} className="px-4 py-4 text-muted">
                     No organizations yet.
                   </td>
                 </tr>
@@ -301,6 +333,9 @@ export function OrganizationsManager({
                       </details>
                     </td>
                     <td className="px-4 py-2.5 text-muted">{fmt(o.createdAt)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <DeleteOrgCell org={o} />
+                    </td>
                   </tr>
                 ))
               )}

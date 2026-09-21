@@ -23,6 +23,7 @@ import { Prisma } from '@prisma/client'
 import { hash } from '@node-rs/argon2'
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
+import { deleteObject } from '@/lib/storage'
 import { slugify } from '@/lib/slug'
 import { generateTempPassword } from '@/lib/temp-password'
 
@@ -77,6 +78,9 @@ export interface PlatformOrg {
   name: string
   slug: string
   memberCount: number
+  // What the org still holds. Only an org holding nothing can be deleted.
+  documentCount: number
+  templateCount: number
   ownerEmails: string[]
   members: PlatformOrgMember[]
   createdAt: Date
@@ -107,6 +111,7 @@ export async function listOrganizations(actor: PlatformActor): Promise<ListOrgan
       name: true,
       slug: true,
       createdAt: true,
+      _count: { select: { documents: true, templates: true } },
       // Full roster per org — never selects passwordHash. Ordering matches
       // src/server/team/actions.ts `listMembers` (owners→admins→members,
       // oldest-first within each group).
@@ -138,12 +143,68 @@ export async function listOrganizations(actor: PlatformActor): Promise<ListOrgan
         name: o.name,
         slug: o.slug,
         memberCount: members.length,
+        documentCount: o._count.documents,
+        templateCount: o._count.templates,
         ownerEmails: members.filter((m) => m.role === 'owner').map((m) => m.email),
         members,
         createdAt: o.createdAt,
       }
     }),
   }
+}
+
+// --- Delete an EMPTY organization ---
+
+export type DeleteOrganizationResult =
+  | { ok: true }
+  | { ok: false; error: 'FORBIDDEN' | 'NOT_FOUND' }
+  | { ok: false; error: 'NOT_EMPTY'; documents: number; templates: number }
+
+/**
+ * Delete an organization that holds nothing: no documents and no templates.
+ * Platform-admin only. An org holding either is refused (NOT_EMPTY, with the
+ * counts) and left untouched — this is for clearing out a mistaken or unused
+ * org, never for deleting anyone's records.
+ *
+ * Its memberships, API keys, webhooks, email server and signing certificates go
+ * with it (cascade); the member ACCOUNTS stay, just without this org, so they
+ * can be re-added elsewhere. The emptiness check and the delete run in one
+ * transaction, so a document created in between cannot be swept away.
+ */
+export async function deleteOrganization(actor: PlatformActor, orgId: string): Promise<DeleteOrganizationResult> {
+  if (!canProvision(actor)) return { ok: false, error: 'FORBIDDEN' }
+  if (!orgId || typeof orgId !== 'string') return { ok: false, error: 'NOT_FOUND' }
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    const org = await tx.organization.findUnique({
+      where: { id: orgId },
+      select: {
+        logoKey: true,
+        signingCertificates: { select: { p12Key: true } },
+        _count: { select: { documents: true, templates: true } },
+      },
+    })
+    if (!org) return { ok: false as const, error: 'NOT_FOUND' as const }
+    const { documents, templates } = org._count
+    if (documents > 0 || templates > 0) {
+      return { ok: false as const, error: 'NOT_EMPTY' as const, documents, templates }
+    }
+    await tx.organization.delete({ where: { id: orgId } })
+    return { ok: true as const, blobs: [org.logoKey, ...org.signingCertificates.map((c) => c.p12Key)] }
+  })
+
+  if (!outcome.ok) return outcome
+  // The org's encrypted blobs (logo, certificate keys) have no rows left pointing
+  // at them. Best-effort: a leftover blob is harmless, a failed delete isn't fatal.
+  for (const key of outcome.blobs) {
+    if (!key) continue
+    try {
+      await deleteObject(key)
+    } catch (err) {
+      console.error('[platform] could not remove a deleted org blob:', err instanceof Error ? err.message : String(err))
+    }
+  }
+  return { ok: true }
 }
 
 // --- Create organization (optionally with an initial owner) ---

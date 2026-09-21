@@ -19,6 +19,7 @@ import {
   listOrganizations,
   createOrganization,
   createUser,
+  deleteOrganization,
 } from '../../src/server/platform/actions'
 
 const admin = { isPlatformAdmin: true }
@@ -317,5 +318,64 @@ describe('listOrganizations (cross-tenant, platform-admin only)', () => {
     expect(serialized).not.toContain(memberFirst.ok ? memberFirst.tempPassword : '__none__')
     expect(serialized).not.toContain(adminUser.ok ? adminUser.tempPassword : '__none__')
     expect(serialized).not.toContain(created.owner.tempPassword)
+  })
+})
+
+describe('deleteOrganization (empty orgs only, platform-admin only)', () => {
+  async function freshOrg(): Promise<string> {
+    const o = await prisma.organization.create({ data: { name: 'Doomed', slug: 'doomed-' + Date.now() + Math.random().toString(36).slice(2) } })
+    orgIds.push(o.id)
+    return o.id
+  }
+
+  it('refuses a non-platform admin and leaves the org', async () => {
+    const id = await freshOrg()
+    expect(await deleteOrganization(notAdmin, id)).toEqual({ ok: false, error: 'FORBIDDEN' })
+    expect(await prisma.organization.findUnique({ where: { id } })).not.toBeNull()
+  })
+
+  it('deletes an empty org; its member accounts survive without it', async () => {
+    const id = await freshOrg()
+    const user = await prisma.user.create({ data: { email: u('orphan'), name: 'O', passwordHash: 'x', role: 'user' } })
+    userIds.push(user.id)
+    await prisma.membership.create({ data: { orgId: id, userId: user.id, role: 'owner' } })
+
+    expect(await deleteOrganization(admin, id)).toEqual({ ok: true })
+    expect(await prisma.organization.findUnique({ where: { id } })).toBeNull()
+    expect(await prisma.user.findUnique({ where: { id: user.id } })).not.toBeNull()
+    expect(await prisma.membership.count({ where: { userId: user.id } })).toBe(0)
+  })
+
+  it('refuses an org holding a document (NOT_EMPTY with counts), untouched', async () => {
+    const id = await freshOrg()
+    const user = await prisma.user.create({ data: { email: u('docowner'), name: 'D', passwordHash: 'x', role: 'user' } })
+    userIds.push(user.id)
+    const doc = await prisma.document.create({
+      data: { ownerId: user.id, orgId: id, originalName: 'k.pdf', originalKey: 'k', originalSha256: 'h', pageCount: 1 },
+    })
+    const res = await deleteOrganization(admin, id)
+    expect(res).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 1, templates: 0 })
+    expect(await prisma.organization.findUnique({ where: { id } })).not.toBeNull()
+    await prisma.document.delete({ where: { id: doc.id } })
+  })
+
+  it('refuses an org holding a template', async () => {
+    const id = await freshOrg()
+    const t = await prisma.template.create({
+      data: { orgId: id, name: 'T', storageKey: 'k', pageCount: 1, createdById: 'x' },
+    })
+    expect(await deleteOrganization(admin, id)).toEqual({ ok: false, error: 'NOT_EMPTY', documents: 0, templates: 1 })
+    await prisma.template.delete({ where: { id: t.id } })
+  })
+
+  it('NOT_FOUND for an unknown org', async () => {
+    expect(await deleteOrganization(admin, 'nope')).toEqual({ ok: false, error: 'NOT_FOUND' })
+  })
+
+  it('the listing reports what each org holds', async () => {
+    const id = await freshOrg()
+    const listed = await listOrganizations(admin)
+    const row = listed.ok ? listed.orgs.find((o) => o.id === id) : undefined
+    expect(row).toMatchObject({ documentCount: 0, templateCount: 0 })
   })
 })
