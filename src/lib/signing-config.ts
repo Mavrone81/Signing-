@@ -7,7 +7,46 @@ import { prisma } from '@/lib/db'
 import { env } from '@/env'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { getObject } from '@/lib/storage'
+import { isCertificateExpired, isCertificateNotYetValid } from '@/lib/pki'
 import { padesSign, type SigningMaterial } from '@/server/pdf/pades'
+
+// Default threshold (F1b) for the settings-page "expires in N days"
+// indicator — a product default, not derived from anything. See
+// getSigningConfigForClient's daysUntilExpiry and the settings page banner.
+export const EXPIRY_WARNING_DAYS = 30
+
+// Typed on purpose (F1b review): maybePadesSign's catch block has to
+// re-throw these PAST its own best-effort "log and return the unsealed
+// bytes" handler for the seal-time refusal to be real rather than nominal.
+// If that re-throw matched on an error MESSAGE, rewording it later
+// (friendlier text, an org id, a prefix) would silently stop the re-throw
+// and reopen the hole with no error anywhere — the catch would just swallow
+// it again. An `instanceof` check on a named class can't be broken by a
+// wording change, so the message text is free to change and the behavior is
+// not. A single base class means a FUTURE sibling (F1c's
+// SigningCertNotYetValidError is the first one) is covered by the same
+// `instanceof SigningCertUnusableError` check without that check needing to
+// be remembered and updated at the one place that matters.
+export abstract class SigningCertUnusableError extends Error {
+  constructor(message: string, readonly orgId: string) {
+    super(message)
+  }
+}
+
+export class SigningCertExpiredError extends SigningCertUnusableError {
+  constructor(orgId: string) {
+    super('SIGNING_CERT_EXPIRED', orgId)
+    this.name = 'SigningCertExpiredError'
+  }
+}
+
+// F1c (found reviewing F1b): the mirror image of expiry.
+export class SigningCertNotYetValidError extends SigningCertUnusableError {
+  constructor(orgId: string) {
+    super('SIGNING_CERT_NOT_YET_VALID', orgId)
+    this.name = 'SigningCertNotYetValidError'
+  }
+}
 
 // --- Passphrase encryption (base64 string wire form over the Buffer crypto) ---
 
@@ -82,10 +121,18 @@ export async function isSigningConfigured(orgId: string): Promise<boolean> {
  * Decrypted, ready-to-sign material for the org's active cert, or null when it
  * has none. SERVER-ONLY — returns the P12 bytes + passphrase; used exclusively
  * by the finalize pipeline (maybePadesSign).
+ *
+ * Throws SigningCertExpiredError when the active cert's `notAfter` has
+ * passed, or SigningCertNotYetValidError when `notBefore` is still in the
+ * future (F1c) — both UNCONDITIONALLY, not gated by any flag (see
+ * maybePadesSign for why: this is a different, more urgent hazard than "no
+ * certificate at all").
  */
 export async function getActiveSigningMaterial(orgId: string): Promise<SigningMaterial | null> {
   const row = await readActiveRow(orgId)
   if (!row) return null
+  if (isCertificateExpired(row.notAfter)) throw new SigningCertExpiredError(orgId)
+  if (isCertificateNotYetValid(row.notBefore)) throw new SigningCertNotYetValidError(orgId)
   // The blob store already decrypts on read.
   const p12 = await getObject(row.p12Key)
   return {
@@ -115,17 +162,37 @@ export async function getActiveSigningMaterial(orgId: string): Promise<SigningMa
  *    Turn this on only after every organization's admin has generated or
  *    uploaded its own certificate in Settings -> Signing.
  *
- * Either way: if a cert IS configured but sealing fails for ANY OTHER reason
- * (a dangling/broken config — missing P12 blob, wrong passphrase, forge
- * error), the failure is logged and the UNCHANGED bytes are returned — that
- * best-effort fallback is unrelated to this flag and unchanged by it. (The
- * optional RFC-3161 timestamp is separately best-effort inside padesSign.)
+ * An EXPIRED or NOT-YET-VALID active certificate is a SEPARATE, UNCONDITIONAL
+ * case (F1b / F1c): it THROWS a SigningCertUnusableError subclass regardless
+ * of SIGNING_FAIL_CLOSED. Unlike "no certificate at all" — which the current
+ * deployment's zero-cert state makes safe to leave off for now — a cert in
+ * this state looks configured. Letting it seal (or silently pass through
+ * unsealed) would produce a signature a verifier may reject while the org
+ * believes its documents are sealed; that is never acceptable, flag or no
+ * flag.
+ *
+ * 🔑 The re-throw below is an `instanceof` check, not a message comparison,
+ * ON PURPOSE: this catch's job for every OTHER error is to log and fall back
+ * to the unsealed bytes, which is exactly the behavior F1b/F1c exist to
+ * defeat for a cert in this state. A string match here would be one wording
+ * change away from silently falling back into that same best-effort path
+ * with no error anywhere. Matching the BASE class means a future sibling
+ * guard is covered automatically, without this line needing to be
+ * remembered and updated.
+ *
+ * Either way: if a cert IS configured and currently valid, but sealing fails
+ * for ANY OTHER reason (a dangling/broken config — missing P12 blob, wrong
+ * passphrase, forge error), the failure is logged and the UNCHANGED bytes are
+ * returned — that best-effort fallback is unrelated to this flag and
+ * unchanged by it. (The optional RFC-3161 timestamp is separately
+ * best-effort inside padesSign.)
  */
 export async function maybePadesSign(pdfBytes: Uint8Array, orgId: string): Promise<Uint8Array> {
   let material: SigningMaterial | null
   try {
     material = await getActiveSigningMaterial(orgId)
   } catch (err) {
+    if (err instanceof SigningCertUnusableError) throw err
     console.error('[signing] could not load signing material, finalizing without a seal:', err instanceof Error ? err.message : String(err))
     return pdfBytes
   }
@@ -154,6 +221,12 @@ export type SigningConfigClientView = {
   tsaUrl: string
   origin: string
   expired: boolean
+  // Negative once expired. This is a PASSIVE value shown on a page an admin
+  // has to visit — it is NOT a warning mechanism by itself (F1b open item:
+  // a real warning needs a PUSH — email, in-app banner, alarm — and which of
+  // those is a product decision, not made here). Do not read "the expiry
+  // indicator was added" as "the availability cliff is handled".
+  daysUntilExpiry: number
 } | null
 
 export async function getSigningConfigForClient(orgId: string): Promise<SigningConfigClientView> {
@@ -172,6 +245,7 @@ export async function getSigningConfigForClient(orgId: string): Promise<SigningC
     fingerprint: row.fingerprint,
     tsaUrl: row.tsaUrl ?? '',
     origin: row.origin,
-    expired: row.notAfter.getTime() < Date.now(),
+    expired: isCertificateExpired(row.notAfter),
+    daysUntilExpiry: Math.ceil((row.notAfter.getTime() - Date.now()) / 86_400_000),
   }
 }

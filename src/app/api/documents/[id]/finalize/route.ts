@@ -3,6 +3,7 @@ import { auth } from '@/auth'
 import { prisma } from '@/lib/db'
 import { canAccessDocument } from '@/lib/rbac'
 import { saveFields, finalize } from '@/server/documents/actions'
+import { SigningCertUnusableError } from '@/lib/signing-config'
 import type { FlatField } from '@/server/pdf/flatten'
 
 // Runs the PDF flatten + certificate pipeline and encrypted storage via native
@@ -76,8 +77,11 @@ export async function POST(
     if (message.includes('ALREADY_SIGNED')) {
       return NextResponse.json({ error: 'ALREADY_SIGNED' }, { status: 409 })
     }
+    if (err instanceof SigningCertUnusableError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
+    }
     if (message === 'SIGNING_NOT_CONFIGURED') {
-      return NextResponse.json({ error: 'SIGNING_NOT_CONFIGURED' }, { status: 409 })
+      return NextResponse.json({ error: message }, { status: 409 })
     }
     throw err
   }

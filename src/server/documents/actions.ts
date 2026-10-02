@@ -330,6 +330,10 @@ export async function saveFields(docId: string, fields: FlatField[]): Promise<vo
  *  - Error('SIGNING_NOT_CONFIGURED') — only when env.SIGNING_FAIL_CLOSED is
  *    on: the org has no active signing certificate. Nothing has been
  *    persisted yet when this throws (see maybePadesSign in signing-config.ts).
+ *  - SigningCertExpiredError — UNCONDITIONALLY (not flag-gated): the org's
+ *    active certificate has passed its notAfter. Nothing persisted. Typed
+ *    (not a message string) so a wording change can't silently defeat the
+ *    `instanceof` re-throw in maybePadesSign's catch.
  */
 export async function finalize(
   docId: string,
@@ -518,10 +522,12 @@ export async function deleteDocument(
  * AuditEvent, so the certificate can print each signer's IP.
  *
  * Throws Error('SIGNING_NOT_CONFIGURED') when env.SIGNING_FAIL_CLOSED is on
- * and the org has no active certificate — the document stays `sent` (not
- * completed). The caller (completeSigning) catches this specifically: the
- * recipient's own signature was already committed before this function ran,
- * so that must not be lost just because sealing cannot proceed yet.
+ * and the org has no active certificate, or a SigningCertExpiredError
+ * UNCONDITIONALLY when the org's active certificate has expired — either way
+ * the document stays `sent` (not completed). The caller (completeSigning)
+ * catches both specifically: the recipient's own signature was already
+ * committed before this function ran, so that must not be lost just because
+ * sealing cannot proceed yet.
  */
 export async function finalizeSentDocument(
   docId: string,

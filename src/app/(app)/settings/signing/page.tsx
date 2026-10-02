@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
 import { canManageOrgSettings } from '@/lib/org-settings'
-import { getSigningConfigForClient } from '@/lib/signing-config'
+import { getSigningConfigForClient, EXPIRY_WARNING_DAYS } from '@/lib/signing-config'
 import {
   generatePlatformCertificate,
   uploadPlatformCertificate,
@@ -69,6 +69,21 @@ export default async function SigningSettingsPage({
           {error === 'toolarge' && 'That file is too large to be a signing certificate.'}
           {error === 'badp12' && 'Could not open the P12 — check the file and passphrase.'}
           {error === 'notconfigured' && 'Configure a certificate first.'}
+          {error === 'expired' && 'That certificate has already expired. Upload or generate one that is still valid.'}
+          {error === 'notyetvalid' && 'That certificate is not valid yet (its validity period starts in the future). Upload or generate one that is valid now.'}
+        </div>
+      )}
+
+      {/* Expiry warning — PASSIVE: only an admin who visits this page sees it.
+          This is explicitly NOT a complete warning mechanism (F1b open item):
+          a real warning needs a PUSH (email, in-app banner, alarm), and which
+          of those to build is a product decision, not made here. */}
+      {configured && !cfg!.expired && cfg!.daysUntilExpiry <= EXPIRY_WARNING_DAYS && (
+        <div className="mt-5 rounded-lg border border-warn/35 bg-warn-tint px-4 py-3 text-[13px] text-ink">
+          <strong>Certificate expiring soon.</strong> This certificate expires in{' '}
+          {cfg!.daysUntilExpiry} day{cfg!.daysUntilExpiry === 1 ? '' : 's'}. Once it expires,
+          this organization&apos;s documents will stop completing until a new certificate is
+          generated or uploaded. Replace it before then.
         </div>
       )}
 
