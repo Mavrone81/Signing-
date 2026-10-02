@@ -15,6 +15,23 @@ export type CertMetadata = {
   fingerprint: string
 }
 
+// Single source of truth for "is this certificate expired", shared by the
+// upload-time rejection (settings/signing/actions.ts) and the sealing-time
+// refusal (signing-config.ts) — both must use the exact same boundary
+// (`<=`, not `<`: a certificate is not valid AT its own expiry instant).
+export function isCertificateExpired(notAfter: Date): boolean {
+  return notAfter.getTime() <= Date.now()
+}
+
+// F1c (found reviewing F1b, by construction): the mirror image of
+// expiry — notBefore was never checked anywhere, so a not-yet-valid
+// certificate (e.g. an admin-supplied P12 issued for future use) uploaded
+// cleanly and became active. Shares the same two call sites as
+// isCertificateExpired above.
+export function isCertificateNotYetValid(notBefore: Date): boolean {
+  return notBefore.getTime() > Date.now()
+}
+
 // Build a readable RFC-4514-ish DN string ("CN=…, O=…") from a forge subject/
 // issuer attribute list.
 function dnToString(attrs: forge.pki.CertificateField[]): string {
@@ -52,11 +69,26 @@ export function certMetadata(cert: forge.pki.Certificate): CertMetadata {
  *
  * Returns the DER PKCS#12 bytes plus the parsed non-secret certificate metadata.
  */
-export function generateSelfSignedP12(opts: {
+type GenerateSelfSignedP12Opts = {
   commonName: string
   passphrase: string
-  years?: number
-}): { p12: Buffer; metadata: CertMetadata } {
+} & (
+  | { years?: number; validity?: undefined }
+  // Test-only escape hatch: override the issued validity window directly
+  // instead of deriving it from `years`. Lets tests build a REAL, otherwise
+  // normal self-signed P12 (same code path as production) whose certificate
+  // happens to already be expired or not-yet-valid — needed to exercise the
+  // upload-time and sealing-time guards with a realistic fixture, not a
+  // hand-rolled one. Production call sites never pass this. Mutually
+  // exclusive with `years` AT THE TYPE LEVEL (not just "ignored if both are
+  // given"): passing both would silently ignore one of them, which is
+  // exactly the shape of bug this release has hit more than once today.
+  | { years?: undefined; validity: { notBefore: Date; notAfter: Date } }
+)
+
+export function generateSelfSignedP12(
+  opts: GenerateSelfSignedP12Opts,
+): { p12: Buffer; metadata: CertMetadata } {
   const years = opts.years && opts.years > 0 ? opts.years : 3
   const cn = opts.commonName.trim() || 'Bevora Sign'
 
@@ -73,9 +105,14 @@ export function generateSelfSignedP12(opts: {
   cert.publicKey = forgePub
   // A random positive serial (leading 0x00 keeps it non-negative in DER).
   cert.serialNumber = '00' + forge.util.bytesToHex(forge.random.getBytesSync(16))
-  cert.validity.notBefore = new Date()
-  cert.validity.notAfter = new Date()
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + years)
+  if (opts.validity) {
+    cert.validity.notBefore = opts.validity.notBefore
+    cert.validity.notAfter = opts.validity.notAfter
+  } else {
+    cert.validity.notBefore = new Date()
+    cert.validity.notAfter = new Date()
+    cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + years)
+  }
 
   const attrs = [
     { name: 'commonName', value: cn },

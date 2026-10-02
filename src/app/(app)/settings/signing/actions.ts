@@ -9,7 +9,7 @@ import { uid } from '@/lib/uid'
 import { canManageOrgSettings } from '@/lib/org-settings'
 import { putObject, deleteObject } from '@/lib/storage'
 import { encryptSecret, invalidateSigningCache } from '@/lib/signing-config'
-import { generateSelfSignedP12, parseP12Metadata, type CertMetadata } from '@/lib/pki'
+import { generateSelfSignedP12, parseP12Metadata, isCertificateExpired, isCertificateNotYetValid, type CertMetadata } from '@/lib/pki'
 
 // A P12 upload larger than this is rejected outright (a real signing P12 is a
 // few KB; this only guards against accidental/huge uploads).
@@ -135,6 +135,15 @@ export async function uploadPlatformCertificate(formData: FormData): Promise<voi
     // Wrong passphrase or an unparseable/incomplete P12.
     redirect('/settings/signing?error=badp12')
   }
+
+  // F1b: reject an already-expired certificate rather than persisting it.
+  // This alone is not enough — a certificate valid today can still expire
+  // LATER, which is the normal case — so the sealing path (signing-config.ts
+  // maybePadesSign) enforces the same check unconditionally at seal time too.
+  if (isCertificateExpired(metadata.notAfter)) redirect('/settings/signing?error=expired')
+  // F1c (found reviewing F1b): the mirror image — reject a
+  // not-yet-valid certificate too. Same reasoning, same seal-time backstop.
+  if (isCertificateNotYetValid(metadata.notBefore)) redirect('/settings/signing?error=notyetvalid')
 
   await persistSigningCertificate({
     orgId,
