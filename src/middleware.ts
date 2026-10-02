@@ -26,6 +26,10 @@ export default auth((req) => {
     pathname === '/sign' ||
     pathname.startsWith('/sign/') ||
     pathname.startsWith('/api/sign/') ||
+    // An envelope signer's single link (`/e/<token>`): same model — the token
+    // is the authorization, and the page only lists that signer's own
+    // per-document /sign/<token> links.
+    pathname.startsWith('/e/') ||
     // Phase 5 — the PUBLIC REST API is authenticated per-request by a per-org
     // API key (`Authorization: Bearer sk_...`), NOT the user session. So it is
     // "public" to the session middleware; each `/api/v1/**` route enforces the

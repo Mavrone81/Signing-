@@ -54,13 +54,17 @@ export async function POST(
   // Optional expiry: the sender may pass `{ expiresInDays: N }`. A body is
   // optional (older clients POST nothing) — parse leniently and ignore anything
   // that isn't a positive number (sendForSignature re-validates it too).
+  // The sender's invitation note (`{ message }`) is optional too: omitted keeps
+  // whatever the document already stores; an empty string sends no note.
   let expiresInDays: number | null = null
+  let message: unknown = undefined
   try {
-    const body = (await req.json()) as { expiresInDays?: unknown } | null
+    const body = (await req.json()) as { expiresInDays?: unknown; message?: unknown } | null
     const raw = body?.expiresInDays
     if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) expiresInDays = raw
+    if (body && 'message' in body) message = body.message
   } catch {
-    // No/invalid JSON body → no expiry.
+    // No/invalid JSON body → no expiry, note unchanged.
   }
 
   try {
@@ -74,7 +78,7 @@ export async function POST(
         // So notification emails build absolute /sign/<token> links on this deploy.
         baseUrl: base,
       },
-      { expiresInDays },
+      { expiresInDays, message },
     )
     return NextResponse.json(
       {

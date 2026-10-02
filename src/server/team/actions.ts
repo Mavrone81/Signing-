@@ -86,7 +86,7 @@ const addSchema = z.object({
 export type AddMemberInput = { name: string; email: string; role?: OrgRole | string }
 
 export type AddMemberResult =
-  | { ok: true; tempPassword: string; member: TeamMember }
+  | { ok: true; tempPassword: string; member: TeamMember; reAdded: boolean }
   | { ok: false; error: 'FORBIDDEN' | 'INVALID' | 'ALREADY_MEMBER' | 'EMAIL_IN_USE' }
 
 /**
@@ -101,13 +101,21 @@ export type AddMemberResult =
  *
  * Existing-email policy (documented decision): we NEVER hijack an existing
  * account. If the email already belongs to a member of THIS org → ALREADY_MEMBER.
- * If it belongs to an account that exists (in another org, or otherwise) → we
- * REFUSE with EMAIL_IN_USE rather than silently attaching a cross-org membership.
+ * If it belongs to a member of ANOTHER org → we REFUSE with EMAIL_IN_USE rather
+ * than silently attaching a cross-org membership.
  * A User CAN technically hold memberships in several orgs (Membership is unique
  * per [orgId,userId], not globally), but the login/JWT lands a user in their
  * FIRST membership only, so quietly cross-linking an account would be surprising
- * and a cross-tenant footgun — we refuse instead. Only a brand-new email creates
- * a fresh User (argon2-hashed temp password) + Membership.
+ * and a cross-tenant footgun — we refuse instead. A brand-new email creates a
+ * fresh User (argon2-hashed temp password) + Membership.
+ *
+ * Re-adding a removed member: removeMember deletes only the Membership and keeps
+ * the User and their documents, so a person removed from this org still has an
+ * account. When the email belongs to such an account — no membership anywhere,
+ * and no documents in any OTHER org — it is re-attached to this org as a member
+ * (reAdded: true) instead of failing as a duplicate. Their documents in this org
+ * become reachable to them again. They get a fresh temp password like any new
+ * member, since whatever they had before may be long forgotten.
  *
  * On success the freshly generated temp password is returned ONCE (for the admin
  * to share / email); it is argon2-hashed at rest and never returned again.
@@ -123,19 +131,42 @@ export async function addMember(actor: TeamActor, input: AddMemberInput): Promis
   // supplied role is ignored; this is not a guard to bypass, it's the policy.
   const role: OrgRole = 'member'
 
-  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-  if (existing) {
-    const inThisOrg = await prisma.membership.findUnique({
-      where: { orgId_userId: { orgId, userId: existing.id } },
-      select: { id: true },
-    })
-    if (inThisOrg) return { ok: false, error: 'ALREADY_MEMBER' }
-    // Exists but not in this org → refuse (no cross-org hijack). See policy above.
-    return { ok: false, error: 'EMAIL_IN_USE' }
-  }
-
   const tempPassword = generateTempPassword()
   const passwordHash = await hash(tempPassword)
+
+  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+  if (existing) {
+    const memberships = await prisma.membership.findMany({
+      where: { userId: existing.id },
+      select: { orgId: true },
+    })
+    if (memberships.some((m) => m.orgId === orgId)) return { ok: false, error: 'ALREADY_MEMBER' }
+    // Belongs to another org → refuse (no cross-org hijack). See policy above.
+    if (memberships.length > 0) return { ok: false, error: 'EMAIL_IN_USE' }
+    // No org at all, but documents in another org → came from another tenant.
+    const elsewhere = await prisma.document.count({
+      where: { ownerId: existing.id, orgId: { not: orgId } },
+    })
+    if (elsewhere > 0) return { ok: false, error: 'EMAIL_IN_USE' }
+
+    // A member previously removed from this org: re-attach the same account.
+    try {
+      const membership = await prisma.$transaction(async (tx) => {
+        await tx.user.update({ where: { id: existing.id }, data: { passwordHash } })
+        return tx.membership.create({
+          data: { orgId, userId: existing.id, role },
+          select: MEMBER_SELECT,
+        })
+      })
+      return { ok: true, tempPassword, member: toMember(membership), reAdded: true }
+    } catch (err) {
+      // A concurrent add re-attached them first.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return { ok: false, error: 'ALREADY_MEMBER' }
+      }
+      throw err
+    }
+  }
 
   try {
     // User + Membership commit together: a partial create would leave an account
@@ -149,7 +180,7 @@ export async function addMember(actor: TeamActor, input: AddMemberInput): Promis
         select: MEMBER_SELECT,
       })
     })
-    return { ok: true, tempPassword, member: toMember(membership) }
+    return { ok: true, tempPassword, member: toMember(membership), reAdded: false }
   } catch (err) {
     // Unique-constraint race (a concurrent add created this email first) →
     // surface as EMAIL_IN_USE rather than a 500. Never leak the temp password.

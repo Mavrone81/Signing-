@@ -35,6 +35,7 @@ export type AddMemberState =
       role: string
       tempPassword: string
       emailed: boolean
+      reAdded: boolean
     }
   | { status: 'error'; message: string }
 
@@ -89,14 +90,34 @@ export async function addMemberAction(
     role: res.member.role,
     tempPassword: res.tempPassword,
     emailed,
+    reAdded: res.reAdded,
   }
 }
 
-export async function changeRoleAction(formData: FormData): Promise<void> {
+// The outcome of a role change, returned to the row that made it so the UI can
+// say what happened (and show the SAVED role, not a stale one).
+export type ChangeRoleState =
+  | { status: 'idle' }
+  | { status: 'saved'; role: string }
+  | { status: 'error'; message: string }
+
+const ROLE_ERRORS: Record<string, string> = {
+  FORBIDDEN: 'Only an owner can change roles.',
+  NOT_FOUND: 'That member is no longer in this organization.',
+  INVALID: 'Choose owner, admin or member.',
+  LAST_OWNER: 'The organization must keep at least one owner. Make someone else an owner first.',
+}
+
+export async function changeRoleAction(
+  _prev: ChangeRoleState,
+  formData: FormData,
+): Promise<ChangeRoleState> {
   const membershipId = String(formData.get('membershipId') ?? '')
   const role = String(formData.get('role') ?? '')
-  await changeMemberRole(await actor(), membershipId, role)
+  const res = await changeMemberRole(await actor(), membershipId, role)
   revalidatePath('/settings/team')
+  if (!res.ok) return { status: 'error', message: ROLE_ERRORS[res.error] ?? 'Could not change the role.' }
+  return { status: 'saved', role }
 }
 
 export async function removeMemberAction(formData: FormData): Promise<void> {

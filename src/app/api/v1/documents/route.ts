@@ -60,12 +60,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET /api/v1/documents — paginated list, scoped to the key's org.
+// GET /api/v1/documents — paginated list of the documents the key's creator
+// uploaded in the key's org (owner-only, same scope as loadOrgDocument).
 // Query: `?limit=<1..100>&offset=<n>`.
 export async function GET(req: NextRequest) {
   const auth = await authenticateApiKey(req)
   if (!auth.ok) return auth.response
-  const { orgId } = auth.ctx
+  const where = { orgId: auth.ctx.orgId, ownerId: auth.ctx.actorUserId }
 
   const url = new URL(req.url)
   const limitRaw = Number(url.searchParams.get('limit'))
@@ -75,9 +76,9 @@ export async function GET(req: NextRequest) {
   const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.floor(offsetRaw) : 0
 
   const [total, docs] = await Promise.all([
-    prisma.document.count({ where: { orgId } }),
+    prisma.document.count({ where }),
     prisma.document.findMany({
-      where: { orgId },
+      where,
       orderBy: { createdAt: 'desc' },
       skip: offset,
       take: limit,

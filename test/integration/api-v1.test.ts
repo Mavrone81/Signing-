@@ -343,3 +343,36 @@ describe('webhooks — signed delivery + best-effort', () => {
     expect((await prisma.document.findUnique({ where: { id } }))?.status).toBe('sent')
   })
 })
+
+// Owner-only documents: a key acts as its creator, so an org admin cannot mint
+// a key to read a colleague's documents in the same org.
+describe('/api/v1 owner-only — a key sees only its creator’s documents', () => {
+  let colleague: string
+  let colleagueDoc: string
+
+  beforeAll(async () => {
+    const c = await prisma.user.create({ data: { email: 'apic' + Date.now() + '@x.com', name: 'C', passwordHash: 'x', role: 'user' } })
+    colleague = c.id
+    userIds.push(c.id)
+    await prisma.membership.create({ data: { orgId: orgA, userId: colleague, role: 'member' } })
+    const { createDocument } = await import('../../src/server/documents/actions')
+    const d = await createDocument(colleague, orgA, 'colleague.pdf', await samplePdf())
+    colleagueDoc = d.id
+    documentIds.push(d.id)
+  })
+
+  it('GET /documents/{id} for a colleague’s document in the same org → 404', async () => {
+    const { GET } = await import('../../src/app/api/v1/documents/[id]/route')
+    const res = await GET(req(`/api/v1/documents/${colleagueDoc}`, { key: rawA }) as never, {
+      params: Promise.resolve({ id: colleagueDoc }),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('GET /documents does not list a colleague’s document', async () => {
+    const { GET } = await import('../../src/app/api/v1/documents/route')
+    const res = await GET(req('/api/v1/documents?limit=100', { key: rawA }) as never)
+    const body = await res.json()
+    expect(body.documents.map((d: { id: string }) => d.id)).not.toContain(colleagueDoc)
+  })
+})

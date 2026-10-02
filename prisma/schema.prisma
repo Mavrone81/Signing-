@@ -88,6 +88,7 @@ model User {
   totpSecret String?
   documents Document[]
   memberships Membership[]
+  envelopes Envelope[]
   createdAt DateTime @default(now())
 }
 
@@ -107,16 +108,23 @@ model AuthProviderConfig {
   updatedBy String?
 }
 
-// Deployment-wide outbound email (SMTP) configuration — a SINGLETON row
-// (provider 'smtp'), managed by a platform admin via Settings → Email. Mirrors
-// AuthProviderConfig: the SMTP password is stored ENCRYPTED (AES-256-GCM via
-// src/lib/crypto.ts) in `passwordEnc` and is NEVER returned to the client. The
-// mailer (src/lib/mailer.ts) reads this row (short-TTL cached), decrypts the
-// password, and sends best-effort — a missing/disabled config is a no-op that
-// never throws into the signing/send flow.
+// Outbound email (SMTP) configuration, per organization with a shared fallback.
+//  - orgId NULL: the SHARED server, managed by a platform admin. At most one
+//    such row (enforced in src/app/(app)/settings/email/actions.ts, since a
+//    partial unique index can't be expressed here).
+//  - orgId set: that org's OWN server (at most one per org), managed by the
+//    org's owners/admins.
+// A send names the org it is sending as; it uses the org's own server when that
+// row is usable (enabled + host + port + from), otherwise the shared server, and
+// otherwise sends nothing (see src/lib/email-config.ts). The SMTP password is
+// stored ENCRYPTED (AES-256-GCM via src/lib/crypto.ts) in `passwordEnc` and is
+// NEVER returned to the client. Sends are best-effort — a missing config is a
+// no-op that never throws into the signing/send flow.
 model EmailConfig {
   id String @id
-  provider String @unique @default("smtp")
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String? @unique
+  provider String @default("smtp")
   enabled Boolean @default(false)
   host String?
   port Int?
@@ -129,29 +137,36 @@ model EmailConfig {
   updatedBy String?
 }
 
-// PAdES/PKI digital signing — the deployment-wide PLATFORM signing identity
-// (a SINGLETON active row). When configured, the completed/flattened PDF is
-// sealed with a PAdES-compliant detached CMS signature (subfilter
-// ETSI.CAdES.detached, whole-file ByteRange) as the last finalize step; when no
-// active row exists, finalize behaves EXACTLY as before (flatten-only, no seal).
+// PAdES/PKI digital signing — each ORGANIZATION's own signing identity. When an
+// org has an active certificate, its completed/flattened PDFs are sealed with a
+// PAdES-compliant detached CMS signature (subfilter ETSI.CAdES.detached,
+// whole-file ByteRange) as the last finalize step; when it has none, finalize
+// behaves EXACTLY as before (flatten-only, no seal). There is deliberately no
+// fallback to another org's certificate: a seal attests which tenant finalized
+// the document, so one org's key must never seal another org's documents.
 //
-// This is a PLATFORM-LEVEL seal by design: the same certificate seals every
-// org's completed documents (it attests "this PDF was finalized, unaltered, by
-// this Bevora Sign deployment" — NOT the identity of any signer or tenant). It
-// therefore carries no tenant data and cannot leak one org's data into another.
+// Rows are NOT unique per org: replaced certificates are kept (inactive) for
+// audit, and only one per org is active. Lookups are always "this org's active
+// certificate", hence the composite (orgId, active) index.
 //
 // SECRET MATERIAL AT REST: the PKCS#12 (key + cert chain) is written to the
 // encrypted blob store under `p12Key` (AES-256-GCM via DATA_KEY, same as every
 // other blob) and the P12 passphrase is stored AES-256-GCM encrypted in
 // `passphraseEnc`. Neither the key, the P12 bytes, nor the passphrase is ever
 // returned by any API/settings GET or written to any log — only the non-secret
-// certificate metadata below is surfaced. Managed by a platform admin via
-// Settings → Signing (mirrors AuthProviderConfig / EmailConfig).
+// certificate metadata below is surfaced. Managed by the org's owners/admins
+// (and platform admins) via Settings → Signing.
 model SigningCertificate {
   id String @id
-  // One active platform cert at a time; saving a new one deactivates the rest.
+  // Nullable: a certificate migrated from the old deployment-wide table with
+  // more than one organization already in place is left UNASSIGNED rather
+  // than guessed at (see the 20260921120000 migration) — it belongs to no
+  // org until an admin generates/uploads a fresh one for theirs.
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String?
+  // One active cert per org; saving a new one deactivates that org's others.
   active Boolean @default(true)
-  // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<id>.p12").
+  // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<orgId>/<id>.p12").
   p12Key String
   // AES-256-GCM encrypted (base64) P12 passphrase — NEVER returned to a client.
   passphraseEnc String
@@ -170,7 +185,7 @@ model SigningCertificate {
   origin String @default("uploaded")
   createdAt DateTime @default(now())
   createdBy String?
-  @@index([active])
+  @@index([orgId, active])
 }
 
 model Organization {
@@ -194,6 +209,9 @@ model Organization {
   templates Template[]
   apiKeys ApiKey[]
   webhooks Webhook[]
+  signingCertificates SigningCertificate[]
+  emailConfig EmailConfig?
+  envelopes Envelope[]
 }
 
 // Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key
@@ -288,12 +306,55 @@ model Document {
   // `expired`), and the dashboard flags a non-completed doc past its expiry. No
   // background job — a doc is simply un-signable once expired. Null = no expiry.
   expiresAt DateTime?
+  // The sender's personal note in the signing invitation (and its reminders).
+  // Null = no note. Kept after sending so an amended re-send is pre-filled with
+  // it. See src/lib/invite-message.ts.
+  inviteMessage String?
+  // The envelope this document is sent in, if any (see Envelope). SetNull: an
+  // envelope going away never takes its documents with it.
+  envelope Envelope? @relation(fields: [envelopeId], references: [id], onDelete: SetNull)
+  envelopeId String?
   fields Field[]
   recipients Recipient[]
   audit AuditEvent[]
   createdAt DateTime @default(now())
   signedAt DateTime?
 }
+// An envelope groups several documents that go to the same people together.
+// It is deliberately THIN: each document keeps its own recipients, fields,
+// finalize and signed file, and the envelope never stores a status — it is
+// derived from its documents (src/lib/envelopes.ts). Owner-only, like documents:
+// only the person who created it, in its org, can see or send it.
+model Envelope {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id])
+  orgId String
+  owner User @relation(fields: [ownerId], references: [id])
+  ownerId String
+  name String
+  // The sender's note for the one invitation each signer receives.
+  inviteMessage String?
+  documents Document[]
+  signers EnvelopeSigner[]
+  createdAt DateTime @default(now())
+  @@index([orgId, ownerId])
+}
+
+// One person signing in an envelope. `token` is their single link (/e/<token>)
+// listing every document in the envelope they are a recipient of; each entry
+// hands off to the unchanged per-document signing flow (/sign/<token>).
+model EnvelopeSigner {
+  id String @id @default(cuid())
+  envelope Envelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade)
+  envelopeId String
+  email String
+  name String
+  orderIndex Int @default(0)
+  token String @unique
+  createdAt DateTime @default(now())
+  @@unique([envelopeId, email])
+}
+
 model Field {
   id String @id @default(cuid())
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)

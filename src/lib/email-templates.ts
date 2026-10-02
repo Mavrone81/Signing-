@@ -102,15 +102,29 @@ const small = (t: string) =>
 
 // --- Request to sign (also used for reminders via `reminder: true`) ----------
 
+// The sender's personal note, set apart from our own wording so the recipient
+// can tell who wrote what. Escaped; line breaks kept.
+function senderNote(message: string, senderName: string): string {
+  const body = esc(message).replace(/\n/g, '<br>')
+  return (
+    `<div style="margin:0 0 16px;padding:12px 14px;border-left:3px solid ${EDGE};background:${SHELL};">` +
+    `<p style="margin:0 0 6px;font-size:12px;color:${MUTED};">Message from ${esc(senderName)}</p>` +
+    `<p style="margin:0;font-size:14px;line-height:1.55;color:${INK};">${body}</p>` +
+    `</div>`
+  )
+}
+
 export function renderRequestEmail(opts: {
   recipientName: string
   senderName: string
   docName: string
   signUrl: string
   reminder?: boolean
+  // The sender's note (Document.inviteMessage); null/omitted = none.
+  message?: string | null
   brand?: EmailBrand
 }): RenderedEmail {
-  const { recipientName, senderName, docName, signUrl, reminder, brand } = opts
+  const { recipientName, senderName, docName, signUrl, reminder, message, brand } = opts
   const subject = reminder
     ? `Reminder: ${senderName} has requested your signature on ${docName}`
     : `${senderName} has requested your signature on ${docName}`
@@ -123,6 +137,7 @@ export function renderRequestEmail(opts: {
     h(reminder ? 'Reminder: your signature is requested' : 'Your signature is requested') +
       p(`Hi ${esc(recipientName)},`) +
       p(lead) +
+      (message ? senderNote(message, senderName) : '') +
       button(signUrl, 'Review &amp; Sign', brand) +
       small(`If the button doesn't work, copy and paste this link into your browser:<br><span style="color:${BRAND_DARK};word-break:break-all;">${esc(signUrl)}</span>`),
     brand,
@@ -137,6 +152,7 @@ export function renderRequestEmail(opts: {
       ? `This is a friendly reminder that ${senderName} is waiting for your signature on "${docName}".`
       : `${senderName} has requested your signature on "${docName}".`,
     '',
+    ...(message ? [`Message from ${senderName}:`, message, ''] : []),
     `Review & sign: ${signUrl}`,
     '',
     `— ${brand?.name ?? 'Bevora Sign'}`,
@@ -146,6 +162,55 @@ export function renderRequestEmail(opts: {
 }
 
 // --- Completed (all recipients signed) ---------------------------------------
+
+// ONE invitation per signer for an envelope: every document they need to sign,
+// and their single link (/e/<token>) that lists them.
+export function renderEnvelopeEmail(opts: {
+  recipientName: string
+  senderName: string
+  envelopeName: string
+  docNames: string[]
+  envelopeUrl: string
+  message?: string | null
+  brand?: EmailBrand
+}): RenderedEmail {
+  const { recipientName, senderName, envelopeName, docNames, envelopeUrl, message, brand } = opts
+  const n = docNames.length
+  const noun = n === 1 ? 'document' : `${n} documents`
+  const subject = `${senderName} has requested your signature on ${noun}: ${envelopeName}`
+
+  const list =
+    `<ul style="margin:0 0 16px;padding-left:20px;font-size:14px;line-height:1.6;color:${INK};">` +
+    docNames.map((d) => `<li>${esc(d)}</li>`).join('') +
+    '</ul>'
+
+  const html = layout(
+    h('Your signature is requested') +
+      p(`Hi ${esc(recipientName)},`) +
+      p(`<strong>${esc(senderName)}</strong> has requested your signature on ${n === 1 ? 'a document' : `${n} documents`} in <strong>${esc(envelopeName)}</strong>:`) +
+      list +
+      (message ? senderNote(message, senderName) : '') +
+      button(envelopeUrl, n === 1 ? 'Review &amp; Sign' : 'Review &amp; Sign all', brand) +
+      small(`If the button doesn't work, copy and paste this link into your browser:<br><span style="color:${BRAND_DARK};word-break:break-all;">${esc(envelopeUrl)}</span>`),
+    brand,
+  )
+
+  const text = [
+    'Your signature is requested',
+    '',
+    `Hi ${recipientName},`,
+    '',
+    `${senderName} has requested your signature on ${n === 1 ? 'a document' : `${n} documents`} in "${envelopeName}":`,
+    ...docNames.map((d) => `  - ${d}`),
+    '',
+    ...(message ? [`Message from ${senderName}:`, message, ''] : []),
+    `Review & sign: ${envelopeUrl}`,
+    '',
+    `— ${brand?.name ?? 'Bevora Sign'}`,
+  ].join('\n')
+
+  return { subject, html, text }
+}
 
 export function renderCompletedEmail(opts: {
   recipientName: string

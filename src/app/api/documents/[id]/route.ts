@@ -12,9 +12,9 @@ export const dynamic = 'force-dynamic'
 // deletes both encrypted blobs (original + signed, if present), then the
 // Document row (Field/Recipient/AuditEvent cascade at the DB level).
 //
-// Authorization is `canAccessDocument` (enforced inside `deleteDocument`): a
-// member may delete only their own document; an org owner/admin may delete
-// any document in their org. A missing document and an unauthorized one
+// Authorization is `canAccessDocument` (enforced inside `deleteDocument`):
+// only the uploader may delete a document (owner-only; org owners/admins get
+// no override). A missing document and an unauthorized one
 // (same-org non-owner, or a different org) both 404 — deliberately never a
 // separate 403 — so the response can never reveal whether a document the
 // caller isn't allowed to touch even exists.

@@ -21,7 +21,9 @@ export default async function OrganizationsSettingsPage() {
   // already know the actor is a platform admin, ok is always true here.
   const [listed, emailConfigured] = await Promise.all([
     listOrganizations({ isPlatformAdmin: true }),
-    isEmailConfigured(),
+    // The shared server: a new org has no server of its own yet, so its invite
+    // emails go out through the shared one or not at all.
+    isEmailConfigured(null),
   ])
   const orgs = listed.ok ? listed.orgs : []
 
