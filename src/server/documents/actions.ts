@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { PDFDocument } from 'pdf-lib'
 import { AuditAction, DocStatus, FieldType, OrgRole, Prisma } from '@prisma/client'
 import { uid } from '@/lib/uid'
+import { newSigningToken } from '@/lib/signing-token'
 import { prisma } from '@/lib/db'
 import { putObject, getObject, deleteObject } from '@/lib/storage'
 import { sha256hex } from '@/lib/hash'
@@ -669,7 +670,9 @@ export async function saveRecipients(
       orderIndex: Number.isInteger(r.orderIndex) ? (r.orderIndex as number) : i,
       // A placeholder token so the NOT-NULL/unique column is populated during
       // editing; sendForSignature mints the live signing token at send time.
-      token: uid(),
+      // Still CSPRNG: a draft's placeholder is a real row in a token-unique
+      // column and must never be guessable either.
+      token: newSigningToken(),
     }
   })
 
@@ -735,7 +738,7 @@ export async function sendForSignature(
   if (orphan) throw new Error('RECIPIENT_WITHOUT_FIELD')
 
   // Mint a fresh live token per recipient at send time.
-  const tokens = new Map(doc.recipients.map((r) => [r.id, uid()]))
+  const tokens = new Map(doc.recipients.map((r) => [r.id, newSigningToken()]))
 
   // Optional expiry: only a positive, finite day count sets a deadline; anything
   // else (omitted/null/0/negative/NaN) leaves the document without one.

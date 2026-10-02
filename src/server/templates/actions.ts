@@ -1,5 +1,6 @@
 import { AuditAction, DocStatus, FieldType, Prisma } from '@prisma/client'
 import { uid } from '@/lib/uid'
+import { newSigningToken } from '@/lib/signing-token'
 import { prisma } from '@/lib/db'
 import { putObject, getObject, deleteObject } from '@/lib/storage'
 import { sha256hex } from '@/lib/hash'
@@ -190,7 +191,7 @@ export async function createDocumentFromTemplate(
           name: r.name,
           orderIndex: r.orderIndex,
           // Placeholder token until the doc is actually sent (mirrors saveRecipients).
-          token: uid(),
+          token: newSigningToken(),
         })),
       })
     }

@@ -2,8 +2,17 @@
 // (HTTPS or localhost); this app is served over plain HTTP on the internal LAN,
 // where `crypto.randomUUID` is undefined and calling it throws. Fall back to
 // `crypto.getRandomValues` (available in non-secure contexts too), then to a
-// timestamp+random last resort. These ids are client-only — React keys and
-// field selection — and are stripped before fields are sent to the server.
+// timestamp+random last resort.
+//
+// 🔴 NOT FOR CREDENTIALS. This helper is for React keys, field selection and
+// row ids. It makes no guarantee about which branch above it takes, so it must
+// never be used for a value that grants access. For those, use
+// `newSigningToken()` in @/lib/signing-token, which mints from
+// crypto.randomBytes with no feature detection.
+//
+// (An earlier version of this comment asserted these ids never reach the
+// server. Do not restore that claim: it is not a contract this function can
+// keep, and callers were relying on it.)
 export function uid(): string {
   const c = typeof crypto !== 'undefined' ? crypto : undefined
   if (c && typeof c.randomUUID === 'function') return c.randomUUID()

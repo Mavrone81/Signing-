@@ -13,7 +13,7 @@
 // can only hold that person's own documents from that org.
 import { DocStatus, RecipientStatus, type OrgRole } from '@prisma/client'
 import { prisma } from '@/lib/db'
-import { uid } from '@/lib/uid'
+import { newSigningToken } from '@/lib/signing-token'
 import { canAccessDocument } from '@/lib/rbac'
 import { deriveEnvelopeStatus, normalizeSigners, type EnvelopeStatus, type SignerInput } from '@/lib/envelopes'
 import { normalizeInviteMessage } from '@/lib/invite-message'
@@ -127,7 +127,7 @@ async function syncRecipients(documentId: string, signers: { name: string; email
     for (const [email, s] of wanted) {
       const r = kept.get(email)
       if (r) await tx.recipient.update({ where: { id: r.id }, data: { name: s.name, orderIndex: s.orderIndex } })
-      else await tx.recipient.create({ data: { documentId, email, name: s.name, orderIndex: s.orderIndex, token: uid() } })
+      else await tx.recipient.create({ data: { documentId, email, name: s.name, orderIndex: s.orderIndex, token: newSigningToken() } })
     }
     return unassigned
   })
@@ -167,7 +167,7 @@ export async function setSigners(
     for (const [i, s] of signers.entries()) {
       const had = byEmail.get(s.email)
       if (had) await tx.envelopeSigner.update({ where: { id: had.id }, data: { name: s.name, orderIndex: i } })
-      else await tx.envelopeSigner.create({ data: { envelopeId: env.id, email: s.email, name: s.name, orderIndex: i, token: uid() } })
+      else await tx.envelopeSigner.create({ data: { envelopeId: env.id, email: s.email, name: s.name, orderIndex: i, token: newSigningToken() } })
     }
   })
 
@@ -385,7 +385,9 @@ export type SignerEnvelopeView = {
 
 /**
  * What a signer sees at /e/<token>: the documents in the envelope that they are
- * a recipient of. The token IS the authorization (unguessable, per signer), so
+ * a recipient of. The token IS the authorization, so it is minted by
+ * `newSigningToken()` (256-bit CSPRNG) from @/lib/signing-token — never from
+ * the general-purpose client-side id helper, which has no security contract.
  * it only ever reveals that signer's own per-document links — each of which
  * then goes through the unchanged /sign/<token> flow and its own checks
  * (turn order, expiry, already signed). Unsent drafts are not shown.
