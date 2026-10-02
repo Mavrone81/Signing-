@@ -12,7 +12,7 @@ import { prisma } from '../../src/lib/db'
 import { reconcileCertExpiryNotifications } from '../../src/server/notifications/cert-expiry'
 
 const DAY_MS = 86_400_000
-const NOW = new Date('2026-10-02T00:00:00.000Z')
+const NOW = new Date('2027-03-15T00:00:00.000Z')
 const daysOut = (n: number) => new Date(NOW.getTime() + n * DAY_MS)
 const LONG_AGO = new Date(NOW.getTime() - 400 * DAY_MS)
 

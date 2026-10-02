@@ -22,6 +22,14 @@ ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholde
 ENV AUTH_SECRET="build-time-placeholder-not-used-at-runtime"
 # DATA_KEY must be exactly 64 hex chars to pass src/env.ts validation.
 ENV DATA_KEY="0000000000000000000000000000000000000000000000000000000000000000"
+# Sign #11 round 3: provenance. .dockerignore excludes .git, so this build
+# cannot compute its own commit — it must be passed in (docker-compose.yml's
+# `build.args`, filled from the deploy script's own `git rev-parse HEAD`).
+# Forwarded to ENV so scripts/generate-git-sha.mjs (run by the `prebuild`
+# hook, below) can read it; that script FAILS THE BUILD if this is unset AND
+# there is no .git to fall back on, rather than shipping an "unknown".
+ARG GIT_SHA
+ENV GIT_SHA=${GIT_SHA}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # prebuild hook (scripts/copy-pdf-worker.mjs) copies the pdf.js worker into

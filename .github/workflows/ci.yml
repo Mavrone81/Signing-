@@ -85,12 +85,29 @@ jobs:
       - name: Apply migrations
         run: pnpm prisma migrate deploy
 
+      # src/app/api/health/route.ts imports the build-time-generated
+      # src/generated/git-sha.ts, so even `tsc --noEmit` needs it to exist.
+      # NOT run from `postinstall` (deliberately — see package.json): the
+      # Docker build's `deps` stage runs `pnpm install` with no .git and no
+      # GIT_SHA yet, and the generator must fail loudly in that situation
+      # rather than ever write a placeholder, which would break that cache
+      # layer for a file it doesn't actually need yet. CI has a full
+      # checkout (`fetch-depth: 0`), so the generator's git fallback works
+      # here unconditionally.
+      - name: Generate build-time git sha stamp
+        run: node scripts/generate-git-sha.mjs
+
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 
       - name: Lint
         run: pnpm lint
 
+      # test/integration/notifications-reconcile-http.test.ts spawns a real
+      # `next start` — but it builds ITS OWN fresh copy from the current
+      # working tree first (see that file), so it is correct regardless of
+      # step order and never serves an ambient/stale .next/. No special
+      # ordering needed here as a result.
       - name: Unit + integration tests
         run: pnpm test
 

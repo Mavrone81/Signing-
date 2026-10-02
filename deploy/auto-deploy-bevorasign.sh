@@ -117,6 +117,12 @@ fi
 
 git reset --hard "origin/$BRANCH"   # code only; .env + named volumes survive
 
+# Sign #11 round 3: provenance. docker-compose.yml's `app.build.args.GIT_SHA`
+# reads this from the shell environment compose runs in — $REMOTE, not
+# $LOCAL, because $REMOTE is what the reset above just checked out and is
+# about to be built; $LOCAL is the pre-reset HEAD, already stale by now.
+export GIT_SHA="$REMOTE"
+
 if [ "$DOCS_ONLY" = true ]; then
   log "docs-only change; skipping rebuild"
 elif "${COMPOSE[@]}" up -d --build app; then
