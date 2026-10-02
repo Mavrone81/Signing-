@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { prisma } from '@/lib/db'
+import { documentScope } from '@/lib/rbac'
 import { createDocument } from '@/server/documents/actions'
 import { env } from '@/env'
 
@@ -81,19 +82,14 @@ export async function GET() {
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'UNAUTHENTICATED' }, { status: 401 })
   }
-  // No organization → nothing to list (and no query without an org scope).
-  if (!session.user.orgId) {
+  // Owner-only: the caller's own documents in their own org, whatever their
+  // role. No organization → nothing to list (never an unscoped query).
+  const scope = documentScope(session.user)
+  if (!scope) {
     return NextResponse.json({ documents: [] })
   }
-
-  // Always scope to the caller's org. Org owners/admins see every doc in the
-  // org; a plain member sees only their own — never another tenant's.
-  const isOrgAdmin = session.user.orgRole === 'owner' || session.user.orgRole === 'admin'
   const documents = await prisma.document.findMany({
-    where: {
-      orgId: session.user.orgId,
-      ...(isOrgAdmin ? {} : { ownerId: session.user.id }),
-    },
+    where: scope,
     orderBy: { createdAt: 'desc' },
   })
 

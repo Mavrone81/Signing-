@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { documentScope } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { UploadDropzone } from "@/components/documents/UploadDropzone";
 import { DocumentList } from "@/components/documents/DocumentList";
@@ -43,21 +44,19 @@ export default async function DocumentsPage({
   const status = normalizeStatus(sp.status);
   const q = (sp.q ?? "").trim();
 
-  // Tenant scope: only this org's docs. Org owners/admins see all of them; a
-  // plain member sees only their own. A user with no org sees nothing.
-  const isOrgAdmin =
-    session.user.orgRole === "owner" || session.user.orgRole === "admin";
+  // Owner-only: every role sees only the documents they uploaded, in their own
+  // org (see documentScope). A user with no org sees nothing.
+  const scope = documentScope(session.user);
 
   const where: Prisma.DocumentWhereInput = {
-    orgId: session.user.orgId ?? "",
-    ...(isOrgAdmin ? {} : { ownerId: session.user.id }),
+    ...scope,
     // Status filter (server-side): `all` applies none.
     ...(status !== "all" ? { status } : {}),
     // Case-insensitive name search (server-side).
     ...(q ? { originalName: { contains: q, mode: "insensitive" as const } } : {}),
   };
 
-  const documents = session.user.orgId
+  const documents = scope
     ? await prisma.document.findMany({
         where,
         orderBy: { createdAt: "desc" },

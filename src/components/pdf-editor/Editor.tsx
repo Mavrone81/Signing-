@@ -11,6 +11,7 @@ import { FieldToolbar } from './FieldToolbar'
 import { TextFormatPanel } from './TextFormatPanel'
 import { FieldConfigPanel } from './FieldConfigPanel'
 import { RecipientsPanel } from './RecipientsPanel'
+import { DEFAULT_INVITE_MESSAGE, MAX_INVITE_MESSAGE } from '@/lib/invite-message'
 import { SignatureModal } from './SignatureModal'
 import { uid } from '@/lib/uid'
 import { clampFieldRect } from '@/lib/coords'
@@ -54,6 +55,10 @@ interface EditorProps {
   initialFields: FlatField[]
   initialRecipients: SenderRecipient[]
   initialSigningOrder: SigningOrder
+  // The note used last time this document was sent (null = none/never sent).
+  initialInviteMessage?: string | null
+  // The envelope this document belongs to, if any — the back link returns there.
+  envelopeId?: string | null
 }
 
 const SENT_STATUSES = new Set(['sent', 'completed', 'declined'])
@@ -102,8 +107,18 @@ export function Editor({
   initialFields,
   initialRecipients,
   initialSigningOrder,
+  initialInviteMessage = null,
+  envelopeId = null,
 }: EditorProps) {
   const [data, setData] = useState<ArrayBuffer | null>(null)
+  // The document's current file name (changes when the PDF is replaced) and a
+  // counter that re-fetches the PDF after a replace.
+  const [docName, setDocName] = useState(originalName)
+  const [fileVersion, setFileVersion] = useState(0)
+  const replaceInput = useRef<HTMLInputElement | null>(null)
+  // The invitation note, PRE-FILLED (with last time's note, else the default) so
+  // the sender edits it rather than writing one from nothing.
+  const [inviteMessage, setInviteMessage] = useState<string>(initialInviteMessage ?? DEFAULT_INVITE_MESSAGE)
   const [loadError, setLoadError] = useState<string | null>(null)
   // Fields keep their persisted recipientId (assignment) across the client id
   // remap — the recipient id is the stable DB id, so assignments survive reload.
@@ -170,10 +185,10 @@ export function Editor({
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirty, isLocked])
 
-  // Fetch + decrypt the original PDF once.
+  // Fetch + decrypt the original PDF (again after a replace).
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/documents/${documentId}/file/original`)
+    fetch(`/api/documents/${documentId}/file/original?v=${fileVersion}`, { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status))
         return res.arrayBuffer()
@@ -187,7 +202,7 @@ export function Editor({
     return () => {
       cancelled = true
     }
-  }, [documentId])
+  }, [documentId, fileVersion])
 
   // Click-to-place: drop a field centered on the clicked point, in place of
   // the old auto-staggered default position.
@@ -446,6 +461,7 @@ export function Editor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           expiresInDays: days != null && Number.isFinite(days) && days > 0 ? days : null,
+          message: inviteMessage,
         }),
       })
       if (!sres.ok) {
@@ -466,7 +482,51 @@ export function Editor({
     } catch {
       setSave({ phase: 'error', message: 'Network error. Please try again.' })
     }
-  }, [documentId, flatFields, fields, recipients, saveRecipientsToServer, expiresInDays])
+  }, [documentId, flatFields, fields, recipients, saveRecipientsToServer, expiresInDays, inviteMessage])
+
+  // Replace the draft's PDF with another file, keeping recipients. Fields on
+  // pages the new file doesn't have are dropped (server and on screen).
+  const replaceFile = useCallback(
+    async (file: File) => {
+      if (
+        dirty &&
+        !window.confirm('Replacing the PDF keeps your recipients, but unsaved field changes may be lost. Continue?')
+      ) {
+        return
+      }
+      setSave({ phase: 'busy' })
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const res = await fetch(`/api/documents/${documentId}/replace`, { method: 'POST', body: form })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          const map: Record<string, string> = {
+            INVALID_PDF: 'That file is not a readable PDF.',
+            TOO_LARGE: 'That file is too large.',
+            NOT_DRAFT: 'Only a draft can have its PDF replaced.',
+          }
+          setSave({ phase: 'error', message: map[body.error] ?? `Could not replace the PDF (${res.status}).` })
+          return
+        }
+        const { pageCount, removedFields } = (await res.json()) as { pageCount: number; removedFields: number }
+        setFields((prev) => prev.filter((f) => f.page <= pageCount))
+        setDocName(file.name)
+        setData(null)
+        setFileVersion((v) => v + 1)
+        setSave({
+          phase: 'ok',
+          message:
+            removedFields > 0
+              ? `PDF replaced. Recipients kept; ${removedFields} field${removedFields === 1 ? '' : 's'} on pages the new file doesn’t have ${removedFields === 1 ? 'was' : 'were'} removed.`
+              : 'PDF replaced. Recipients and fields kept.',
+        })
+      } catch {
+        setSave({ phase: 'error', message: 'Network error. Please try again.' })
+      }
+    },
+    [dirty, documentId],
+  )
 
   // Save the current layout (PDF + placed fields + recipient roles) as a
   // reusable template. Persists the on-screen recipients + fields first so the
@@ -555,7 +615,7 @@ export function Editor({
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
-        href="/documents"
+        href={envelopeId ? `/envelopes/${envelopeId}` : "/documents"}
         className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink"
         onClick={(e) => {
           if (
@@ -567,10 +627,10 @@ export function Editor({
           }
         }}
       >
-        <span aria-hidden>←</span> Back to documents
+        <span aria-hidden>←</span> {envelopeId ? "Back to envelope" : "Back to documents"}
       </Link>
       <PageHeader
-        title={originalName}
+        title={docName}
         subtitle={
           isSigned
             ? 'This document is signed and locked. Download it, or reset to draft to make changes.'
@@ -626,6 +686,27 @@ export function Editor({
             >
               Save as template
             </button>
+            <button
+              type="button"
+              className={buttonClasses('secondary', 'md')}
+              onClick={() => replaceInput.current?.click()}
+              disabled={busy}
+            >
+              Replace PDF
+            </button>
+            <input
+              ref={replaceInput}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              aria-hidden
+              tabIndex={-1}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) void replaceFile(f)
+              }}
+            />
             {hasRecipients ? (
               <>
                 <label className="inline-flex items-center gap-1.5 text-[12px] text-muted">
@@ -714,6 +795,23 @@ export function Editor({
               onChangeSigningOrder={setSigningOrder}
               disabled={!data}
             />
+            {hasRecipients && (
+              <div className="mt-4 rounded-xl border border-edge bg-paper p-3">
+                <label htmlFor="invite-message" className="block text-[13px] font-medium text-ink">
+                  Invitation message
+                </label>
+                <textarea
+                  id="invite-message"
+                  value={inviteMessage}
+                  onChange={(e) => setInviteMessage(e.target.value)}
+                  maxLength={MAX_INVITE_MESSAGE}
+                  rows={4}
+                  className="mt-1.5 w-full rounded-lg border border-edge-strong bg-paper px-2.5 py-2 text-[13px] text-ink outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/40"
+                  disabled={busy}
+                />
+                <p className="mt-1 text-[12px] text-muted">Included in the email to each recipient. Clear it to send none.</p>
+              </div>
+            )}
           </div>
         )}
 

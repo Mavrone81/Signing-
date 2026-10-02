@@ -4,7 +4,7 @@ import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { auth } from '@/auth'
 import { isPlatformAdmin } from '@/lib/auth-providers'
-import { createOrganization, createUser, type PlatformActor } from '@/server/platform/actions'
+import { createOrganization, createUser, deleteOrganization, type PlatformActor } from '@/server/platform/actions'
 import { sendTeamInvite } from '@/server/team/notify'
 
 // The acting user's platform-admin context, taken ALWAYS from the session (never
@@ -157,4 +157,24 @@ export async function createUserAction(_prev: CreateUserState, formData: FormDat
     tempPassword: res.tempPassword,
     emailed,
   }
+}
+
+// --- Delete an empty organization ---
+
+export type DeleteOrgState = { status: 'idle' } | { status: 'deleted' } | { status: 'error'; message: string }
+
+export async function deleteOrgAction(_prev: DeleteOrgState, formData: FormData): Promise<DeleteOrgState> {
+  const res = await deleteOrganization(await actor(), String(formData.get('orgId') ?? ''))
+  revalidatePath('/settings/organizations')
+  if (res.ok) return { status: 'deleted' }
+  if (res.error === 'NOT_EMPTY') {
+    const parts = [
+      res.documents ? `${res.documents} document${res.documents === 1 ? '' : 's'}` : '',
+      res.templates ? `${res.templates} template${res.templates === 1 ? '' : 's'}` : '',
+      res.envelopes ? `${res.envelopes} envelope${res.envelopes === 1 ? '' : 's'}` : '',
+    ].filter(Boolean)
+    return { status: 'error', message: `This organization still holds ${parts.join(', ')}, so it can’t be deleted.` }
+  }
+  if (res.error === 'NOT_FOUND') return { status: 'error', message: 'That organization no longer exists.' }
+  return { status: 'error', message: 'You do not have permission to delete organizations.' }
 }

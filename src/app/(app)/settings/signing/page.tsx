@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
-import { isPlatformAdmin } from '@/lib/auth-providers'
+import { canManageOrgSettings } from '@/lib/org-settings'
 import { getSigningConfigForClient } from '@/lib/signing-config'
 import {
   generatePlatformCertificate,
@@ -28,12 +28,14 @@ export default async function SigningSettingsPage({
   searchParams: Promise<{ saved?: string; error?: string }>
 }) {
   const session = await auth()
-  // Platform-admin ("IT admin") only — everyone else gets a 404 (no hint the
-  // page exists). The write actions re-check this gate independently.
-  if (!isPlatformAdmin(session)) notFound()
+  // The org's owners/admins (and platform admins) only — everyone else, and
+  // anyone with no org, gets a 404 (no hint the page exists). The write actions
+  // re-check this gate independently and take the org from the session.
+  const user = session?.user
+  if (!canManageOrgSettings(user)) notFound()
 
   const { saved, error } = await searchParams
-  const cfg = await getSigningConfigForClient()
+  const cfg = await getSigningConfigForClient(user.orgId)
   const configured = cfg?.configured === true
 
   return (
@@ -43,18 +45,19 @@ export default async function SigningSettingsPage({
         backHref="/documents"
         subtitle={
           <>
-            Configure the platform signing certificate. When set, every completed document is sealed
-            with a PAdES-compliant digital signature (detached CMS, <code>ETSI.CAdES.detached</code>,
+            Configure your organization&apos;s signing certificate. When set, every document your
+            organization completes is sealed with a PAdES-compliant digital signature (detached CMS, <code>ETSI.CAdES.detached</code>,
             whole-file ByteRange) so the final PDF is tamper-evident and verifiable in Adobe Reader.
-            Until a certificate is configured, documents are finalized exactly as before (no seal). The
-            private key and passphrase are stored encrypted and are never shown again.
+            Until a certificate is configured, documents are finalized exactly as before (no seal).
+            Each organization seals only with its own certificate. The private key and passphrase are
+            stored encrypted and are never shown again.
           </>
         }
       />
 
       {saved && (
         <div className="mt-5 rounded-lg border border-edge bg-shell px-4 py-3 text-[13px] text-ink">
-          {saved === 'generated' && 'Self-signed platform certificate generated and activated.'}
+          {saved === 'generated' && 'Self-signed certificate generated and activated.'}
           {saved === 'uploaded' && 'Certificate uploaded and activated.'}
           {saved === 'tsa' && 'Timestamp (TSA) URL saved.'}
           {saved === 'removed' && 'Signing certificate removed. Documents finalize without a seal.'}
@@ -73,7 +76,7 @@ export default async function SigningSettingsPage({
           to a public CA, so Adobe shows "signature validity unknown" until the
           certificate is added to the reader's trusted identities. */}
       <div className="mt-5 rounded-lg border border-warn/35 bg-warn-tint px-4 py-3 text-[13px] text-ink">
-        <strong>About trust in Adobe.</strong> A self-signed platform certificate makes the PDF
+        <strong>About trust in Adobe.</strong> A self-signed certificate makes the PDF
         tamper-evident and cryptographically verifiable, but Adobe Reader will show{' '}
         <em>&quot;signature validity is unknown&quot;</em> until the certificate is added to the
         reader&apos;s Trusted Certificates. Upload a P12 issued by a CA your recipients already
@@ -149,8 +152,8 @@ export default async function SigningSettingsPage({
           </>
         ) : (
           <p className="text-[13px] text-muted">
-            No signing certificate is configured. Generate a self-signed certificate or upload a P12
-            below to start sealing completed documents.
+            Your organization has no signing certificate. Generate a self-signed certificate or
+            upload a P12 below to start sealing its completed documents.
           </p>
         )}
       </section>
@@ -185,7 +188,7 @@ export default async function SigningSettingsPage({
             type="submit"
             className="rounded-lg bg-brand-primary px-4 py-2.5 text-[14px] font-medium text-white hover:bg-brand-primary-dark"
           >
-            Generate self-signed platform certificate
+            Generate self-signed certificate
           </button>
         </form>
       </section>

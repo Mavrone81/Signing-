@@ -13,6 +13,7 @@ import { notifyOnSend } from '@/server/documents/notify'
 import { emitDocumentSent } from '@/server/documents/webhook-events'
 import { canAccessDocument } from '@/lib/rbac'
 import { env } from '@/env'
+import { normalizeInviteMessage } from '@/lib/invite-message'
 
 const PDF_MAGIC = '%PDF-'
 
@@ -35,13 +36,9 @@ export interface UploadMeta {
  *  - Error('INVALID_PDF') — missing `%PDF-` magic bytes, or pdf-lib can't
  *                           parse the file (e.g. corrupt/truncated PDF)
  */
-export async function createDocument(
-  ownerId: string,
-  orgId: string,
-  name: string,
-  bytes: Buffer,
-  meta: UploadMeta = {}
-): Promise<{ id: string; pageCount: number }> {
+// Validate an uploaded PDF and read what the database records about it. Throws
+// TOO_LARGE / INVALID_PDF before anything is written anywhere.
+async function inspectPdf(bytes: Buffer): Promise<{ pageCount: number; sha256: string }> {
   const maxBytes = env.MAX_UPLOAD_MB * 1024 * 1024
   if (bytes.length > maxBytes) throw new Error('TOO_LARGE')
 
@@ -56,8 +53,17 @@ export async function createDocument(
   } catch {
     throw new Error('INVALID_PDF')
   }
+  return { pageCount, sha256: sha256hex(bytes) }
+}
 
-  const originalSha256 = sha256hex(bytes)
+export async function createDocument(
+  ownerId: string,
+  orgId: string,
+  name: string,
+  bytes: Buffer,
+  meta: UploadMeta = {}
+): Promise<{ id: string; pageCount: number }> {
+  const { pageCount, sha256: originalSha256 } = await inspectPdf(bytes)
   const id = randomUUID()
   const originalKey = `${id}/original.pdf`
 
@@ -95,6 +101,74 @@ export async function createDocument(
   })
 
   return { id: doc.id, pageCount }
+}
+
+/**
+ * Replace a DRAFT document's PDF with a new file, keeping its recipients (and
+ * their signing order) so the sender doesn't have to set them up again.
+ *
+ * Placed fields are kept where their page still exists; fields on pages the new
+ * file doesn't have are removed, and their count is returned so the editor can
+ * say so. The new file is validated exactly like an upload before anything is
+ * written, stored under a NEW key (so a failure never leaves the row pointing at
+ * a half-replaced blob), and the old blob is removed only after the row commits.
+ * The replacement is audited with the previous file's name and hash.
+ *
+ * Throws NOT_FOUND, NOT_DRAFT (409 — sent/signed documents are immutable),
+ * TOO_LARGE, INVALID_PDF. Authorization (canAccessDocument) is the caller's.
+ */
+export async function replaceDocumentFile(
+  docId: string,
+  actorUserId: string,
+  name: string,
+  bytes: Buffer,
+  meta: UploadMeta = {},
+): Promise<{ pageCount: number; removedFields: number }> {
+  const doc = await prisma.document.findUnique({ where: { id: docId } })
+  if (!doc) throw new Error('NOT_FOUND')
+  if (doc.status !== DocStatus.draft) throw new Error('NOT_DRAFT')
+
+  const { pageCount, sha256 } = await inspectPdf(bytes)
+  const newKey = `${docId}/original-${randomUUID()}.pdf`
+  await putObject(newKey, bytes)
+
+  let removedFields: number
+  try {
+    removedFields = await prisma.$transaction(async (tx) => {
+      // Re-check inside the transaction: a send in between must win.
+      const current = await tx.document.findUnique({ where: { id: docId }, select: { status: true } })
+      if (!current || current.status !== DocStatus.draft) throw new Error('NOT_DRAFT')
+      const removed = await tx.field.deleteMany({ where: { documentId: docId, page: { gt: pageCount } } })
+      await tx.document.update({
+        where: { id: docId },
+        data: { originalName: name, originalKey: newKey, originalSha256: sha256, pageCount },
+      })
+      await tx.auditEvent.create({
+        data: {
+          documentId: docId,
+          userId: actorUserId,
+          action: AuditAction.upload,
+          ip: meta.ip ?? null,
+          userAgent: meta.userAgent ?? null,
+          detail: {
+            replaced: true,
+            previousName: doc.originalName,
+            previousSha256: doc.originalSha256,
+            removedFields: removed.count,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      return removed.count
+    })
+  } catch (err) {
+    await deleteObject(newKey).catch(() => {})
+    throw err
+  }
+
+  await deleteObject(doc.originalKey).catch((err) => {
+    console.error('[documents] could not remove the replaced PDF blob:', err instanceof Error ? err.message : String(err))
+  })
+  return { pageCount, removedFields }
 }
 
 const FIELD_TYPES: ReadonlySet<string> = new Set([
@@ -252,6 +326,9 @@ export async function saveFields(docId: string, fields: FlatField[]): Promise<vo
  * Throws:
  *  - Error('NOT_FOUND')       — no such document
  *  - Error('409 ALREADY_SIGNED') — the document is already signed
+ *  - Error('SIGNING_NOT_CONFIGURED') — only when env.SIGNING_FAIL_CLOSED is
+ *    on: the org has no active signing certificate. Nothing has been
+ *    persisted yet when this throws (see maybePadesSign in signing-config.ts).
  */
 export async function finalize(
   docId: string,
@@ -305,10 +382,10 @@ export async function finalize(
   })
 
   // PAdES/PKI seal — the LAST finalize step. "Activate when configured": if a
-  // platform signing cert is active, the completed PDF (flattened + certificate
+  // document's org has an active signing cert, the completed PDF (flattened + certificate
   // page) is sealed with a detached CMS signature (ETSI.CAdES.detached,
   // whole-file ByteRange); otherwise the bytes pass through UNCHANGED.
-  const sealed = await maybePadesSign(finalBytes)
+  const sealed = await maybePadesSign(finalBytes, doc.orgId)
 
   const signedKey = `${docId}/signed.pdf`
   // Store the encrypted signed blob before the DB update, so a failure here
@@ -382,8 +459,8 @@ export async function resetToDraft(docId: string, actorUserId: string): Promise<
  * caller decides whether that's appropriate (the UI warns before deleting a
  * `sent` document, since its recipients' signing links stop working).
  *
- * Authorization is `canAccessDocument`: a plain member may delete only their
- * OWN document; an org owner/admin may delete any document in their org.
+ * Authorization is `canAccessDocument`: only the uploader may delete a document
+ * (owner-only — org owners/admins get no override).
  * A missing document AND an unauthorized one (same-org non-owner, or a
  * different org entirely) are indistinguishable to the caller — both throw
  * NOT_FOUND — so the error can never be used to learn whether a document a
@@ -438,6 +515,12 @@ export async function deleteDocument(
  *
  * `signerIps` maps Recipient.id → the IP recorded on that recipient's `sign`
  * AuditEvent, so the certificate can print each signer's IP.
+ *
+ * Throws Error('SIGNING_NOT_CONFIGURED') when env.SIGNING_FAIL_CLOSED is on
+ * and the org has no active certificate — the document stays `sent` (not
+ * completed). The caller (completeSigning) catches this specifically: the
+ * recipient's own signature was already committed before this function ran,
+ * so that must not be lost just because sealing cannot proceed yet.
  */
 export async function finalizeSentDocument(
   docId: string,
@@ -487,10 +570,10 @@ export async function finalizeSentDocument(
   })
 
   // PAdES/PKI seal — the LAST finalize step. "Activate when configured": if a
-  // platform signing cert is active, the completed PDF is sealed with a detached
+  // document's org has an active signing cert, the completed PDF is sealed with a detached
   // CMS signature (ETSI.CAdES.detached, whole-file ByteRange); otherwise the
   // bytes pass through UNCHANGED (byte-identical to the flatten-only path).
-  const sealed = await maybePadesSign(finalBytes)
+  const sealed = await maybePadesSign(finalBytes, doc.orgId)
 
   const signedKey = `${docId}/signed.pdf`
   // Store the encrypted signed blob before the DB update (see finalize()).
@@ -633,7 +716,9 @@ export async function sendForSignature(
   docId: string,
   actorUserId: string,
   meta: UploadMeta = {},
-  opts: { expiresInDays?: number | null } = {},
+  // `notify: false` skips the per-document invitation emails — used by an
+  // envelope, which sends each signer ONE email covering all their documents.
+  opts: { expiresInDays?: number | null; message?: unknown; notify?: boolean } = {},
 ): Promise<SavedRecipient[]> {
   const doc = await prisma.document.findUnique({
     where: { id: docId },
@@ -675,7 +760,14 @@ export async function sendForSignature(
     }
     await tx.document.update({
       where: { id: docId },
-      data: { status: DocStatus.sent, sentAt: new Date(), expiresAt },
+      // The sender's note travels with the document so reminders repeat it and
+      // an amended re-send is pre-filled with it. Omitted = keep what's stored.
+      data: {
+        status: DocStatus.sent,
+        sentAt: new Date(),
+        expiresAt,
+        ...(opts.message !== undefined ? { inviteMessage: normalizeInviteMessage(opts.message) } : {}),
+      },
     })
     await tx.auditEvent.create({
       data: {
@@ -693,7 +785,7 @@ export async function sendForSignature(
   // (all for parallel; only the first for sequential). Wrapped so an SMTP/mail
   // failure can never break the send that already committed above.
   try {
-    await notifyOnSend(docId, meta.baseUrl)
+    if (opts.notify !== false) await notifyOnSend(docId, meta.baseUrl)
   } catch (err) {
     console.error('[sendForSignature] notify failed:', err instanceof Error ? err.message : String(err))
   }

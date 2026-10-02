@@ -24,7 +24,7 @@ export async function POST(
   if (!doc) {
     return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 })
   }
-  // Tenancy: only the doc's org (owner or org owner/admin) may remind. A
+  // Tenancy: only the document's uploader, in its own org, may remind. A
   // cross-tenant caller gets 403 — never reaches the recipient.
   if (
     !canAccessDocument(

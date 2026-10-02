@@ -76,6 +76,9 @@ export async function POST(
     if (message.includes('ALREADY_SIGNED')) {
       return NextResponse.json({ error: 'ALREADY_SIGNED' }, { status: 409 })
     }
+    if (message === 'SIGNING_NOT_CONFIGURED') {
+      return NextResponse.json({ error: 'SIGNING_NOT_CONFIGURED' }, { status: 409 })
+    }
     throw err
   }
 }
