@@ -141,7 +141,7 @@ describe('signing_certificate_per_org migration — run-time org-count guard', (
     await createUnassignedCert(schema, 'cert-1')
 
     // A production deploy cannot be made to fail just because more than one
-    // org already exists (Samuel: orgs are created by users at any time, so a
+    // org already exists (owner ruling: orgs are created by users at any time, so a
     // live deployment almost certainly has several) — so this is a SUCCESS
     // that assigns nothing, not an abort. "exactly one org" is the only case
     // that attaches; this is the "otherwise leave unassigned" case.

@@ -6,8 +6,8 @@
 -- count it is left UNASSIGNED (orgId stays NULL, permanently — the column is
 -- nullable, not just nullable-during-migration) rather than assigned to a
 -- org that may never have generated or uploaded it. A live deployment can
--- have any number of pre-existing organizations (Samuel: orgs are created by
--- users at any time), so this migration must succeed regardless of that
+-- have any number of pre-existing organizations (owner ruling: orgs are
+-- created by users at any time), so this migration must succeed regardless of that
 -- count — it never aborts just because more than one org exists. An
 -- unassigned certificate cannot seal anything: every org, including the ones
 -- that didn't get this legacy certificate, fails closed on sealing

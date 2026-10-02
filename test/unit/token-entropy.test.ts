@@ -10,9 +10,8 @@
 // `uid()` is a client-side id helper and carries NO security responsibility:
 // never use it for a token, a key or any other credential.
 //
-// Written by T4-DevSecOps as the gate on T4-DevLead's change, deliberately by a
-// different author than the change itself: a guard written by the author of the
-// code it checks bakes in that author's blind spots.
+// Written deliberately by a different author than the change it gates: a guard
+// written by the author of the code it checks bakes in that author's blind spots.
 //
 // Scans src/ ONLY. A grep-style assertion that walked test/ would match its own
 // source text and pass itself.
