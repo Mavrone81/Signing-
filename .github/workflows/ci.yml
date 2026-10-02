@@ -20,6 +20,13 @@ jobs:
     # port is 5433 (not 5432) because test/setup-env.ts defaults there, to
     # match the local dev container. Credentials are the non-secret dev
     # defaults from .env.example.
+    #
+    # Sign #11's email leg is REAL too, against a disposable mail catcher
+    # (mailpit), not mocked at the transport boundary — mocking sendEmail()
+    # would mean the test verifies "we called a function," and delivery is
+    # the whole feature. Ports 11025 (SMTP)/18025 (HTTP API) match what
+    # test/integration/cert-expiry-notifications.test.ts already hardcodes
+    # for local runs, so the same test code runs unchanged in CI.
     services:
       postgres:
         image: postgres:16
@@ -33,6 +40,14 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
+      mailpit:
+        image: axllent/mailpit:v1.21
+        ports:
+          - 11025:1025
+          - 18025:8025
+        # No --health-cmd: mailpit's image has no shell to exec a healthcheck
+        # in, and it is ready within milliseconds of starting (observed
+        # locally), unlike Postgres above which genuinely needs the wait.
 
     env:
       # src/env.ts validates eagerly at module load, and `next build` imports

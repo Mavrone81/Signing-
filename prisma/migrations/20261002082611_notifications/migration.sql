@@ -5,6 +5,8 @@ CREATE TABLE "Notification" (
     "userId" TEXT NOT NULL,
     "kind" TEXT NOT NULL,
     "dedupeKey" TEXT NOT NULL,
+    "subjectId" TEXT,
+    "thresholdDays" INTEGER,
     "title" TEXT NOT NULL,
     "body" TEXT NOT NULL,
     "href" TEXT,

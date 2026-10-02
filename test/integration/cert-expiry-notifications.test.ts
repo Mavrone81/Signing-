@@ -205,6 +205,31 @@ describe('idempotency (DB-backed, survives a second run)', () => {
     // 30-day notice appears exactly once across both runs, not twice.
     expect(titles.filter((t) => t.includes('30 days')).length).toBe(2) // owner + admin, once each
   })
+
+  it('CONCURRENT runs (Promise.all, not sequential) send the email exactly ONCE per recipient, not twice — the row count alone cannot see this: the claim must happen before the send', async () => {
+    await fetch('http://127.0.0.1:18025/api/v1/messages', { method: 'DELETE' })
+    // Exactly one threshold due (0 = expiry day), eligible because this cert
+    // was just "created" with nothing left — isolates the race to a single
+    // (cert, threshold, recipient) triple per recipient, which is the
+    // narrowest case that can expose a duplicate send.
+    await mkCert({ orgId: orgA, notAfter: NOW, createdAt: NOW })
+
+    const [a, b] = await Promise.all([
+      reconcileCertExpiryNotifications(NOW),
+      reconcileCertExpiryNotifications(NOW),
+    ])
+    expect(a.created + b.created).toBe(2) // owner + admin, exactly once each, across BOTH calls combined
+
+    const rows = await prisma.notification.findMany({ where: { orgId: orgA } })
+    expect(rows).toHaveLength(2)
+
+    // The real proof: count actual messages the catcher received, not rows.
+    // A row count of 2 is consistent with either 2 emails (correct) or 4
+    // (the bug: both racers passed a check-then-act and both sent before
+    // either inserted) — only the catcher's own inbox can tell them apart.
+    const mailpit = await fetch('http://127.0.0.1:18025/api/v1/messages?limit=50').then((r) => r.json())
+    expect((mailpit.messages as unknown[]).length).toBe(2)
+  })
 })
 
 describe('recipients: org admins + the certificate\'s own initiator, deduplicated', () => {

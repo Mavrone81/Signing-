@@ -100,8 +100,46 @@ export async function reconcileCertExpiryNotifications(now: Date = new Date()): 
       const { title, body } = copyFor(threshold, cert)
       for (const recipient of recipients) {
         const key = dedupeKey(cert.id, threshold, recipient.id)
-        const already = await prisma.notification.findUnique({ where: { dedupeKey: key } })
-        if (already) continue
+
+        // CLAIM FIRST, then act. The unique constraint on dedupeKey must
+        // protect the SIDE EFFECT (the email send), not just the row — an
+        // earlier version checked-then-sent-then-inserted, so two concurrent
+        // runs could both pass the check, both send the email, and only
+        // then race on the insert (one losing and swallowing the
+        // now-meaningless P2002): one row, two emails. This route is
+        // documented to be safe to call "including twice at once," so that
+        // was an anticipated condition, not an exotic one. Creating the row
+        // HERE — before sendEmail — means the loser of a concurrent race
+        // never sends at all: it loses the insert and moves on.
+        let claimed: { id: string }
+        try {
+          claimed = await prisma.notification.create({
+            data: {
+              orgId: cert.orgId,
+              userId: recipient.id,
+              kind: 'cert_expiry',
+              dedupeKey: key,
+              subjectId: cert.id,
+              thresholdDays: threshold,
+              title,
+              body,
+              href: `${base}/settings/signing`,
+              // emailSent/emailReason/emailVia start null ("pending" — no
+              // email leg attempted yet) and are filled in by the update
+              // below once the send has actually been attempted.
+            },
+            select: { id: true },
+          })
+        } catch (err) {
+          // P2002 (unique violation on dedupeKey): a concurrent run already
+          // claimed this exact (cert, threshold, recipient) — the loser
+          // stops here, before ever calling sendEmail. Anything else is a
+          // real failure and must not be swallowed.
+          const code = (err as { code?: string } | null)?.code
+          if (code === 'P2002') continue
+          throw err
+        }
+        created += 1
 
         const emailResult = await sendEmail({
           orgId: cert.orgId,
@@ -110,31 +148,14 @@ export async function reconcileCertExpiryNotifications(now: Date = new Date()): 
           html: `<p>${body}</p>`,
           text: body,
         })
-
-        try {
-          await prisma.notification.create({
-            data: {
-              orgId: cert.orgId,
-              userId: recipient.id,
-              kind: 'cert_expiry',
-              dedupeKey: key,
-              title,
-              body,
-              href: `${base}/settings/signing`,
-              emailSent: emailResult.sent,
-              emailReason: emailResult.sent ? null : emailResult.reason,
-              emailVia: emailResult.sent ? emailResult.via : null,
-            },
-          })
-          created += 1
-        } catch (err) {
-          // P2002 (unique violation on dedupeKey): a concurrent reconciliation
-          // run already won this exact (cert, threshold, recipient) — not an
-          // error, the idempotency guarantee working as designed. Anything
-          // else is a real failure and must not be swallowed.
-          const code = (err as { code?: string } | null)?.code
-          if (code !== 'P2002') throw err
-        }
+        await prisma.notification.update({
+          where: { id: claimed.id },
+          data: {
+            emailSent: emailResult.sent,
+            emailReason: emailResult.sent ? null : emailResult.reason,
+            emailVia: emailResult.sent ? emailResult.via : null,
+          },
+        })
       }
     }
   }

@@ -232,6 +232,13 @@ model Notification {
   // e.g. "cert_expiry:<certId>:<thresholdDays>:<userId>" — one row per
   // (kind, subject, threshold, recipient), ever.
   dedupeKey String @unique
+  // Queryable copies of what dedupeKey encodes as a string, so the display
+  // layer can re-check LIVE state (a post-expiry notice must stay lit
+  // while the certificate remains expired/unreplaced, overriding a
+  // `readAt` that would otherwise silence it) without parsing dedupeKey.
+  // Both null for notification kinds that don't need this.
+  subjectId String?
+  thresholdDays Int?
   title String
   body String
   href String?
