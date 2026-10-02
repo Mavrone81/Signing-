@@ -35,7 +35,15 @@ export default auth((req) => {
     // "public" to the session middleware; each `/api/v1/**` route enforces the
     // key itself (401 on missing/invalid/revoked) and scopes every action to the
     // key's org. It must NOT be bounced to /login like a session-gated route.
-    pathname.startsWith('/api/v1/')
+    pathname.startsWith('/api/v1/') ||
+    // Sign #11 — machine-to-machine endpoints with no human session at all
+    // (an external scheduler calling the cert-expiry reconciliation route).
+    // Same shape as /api/v1/ above: authenticated per-request by its own
+    // shared secret (X-Cron-Secret), not the user session, so it must not be
+    // bounced to /login either — that would make it unreachable by its
+    // actual caller. (Found by review: a cron's plain POST got a 302 here
+    // and would have reported false success forever.)
+    pathname.startsWith('/api/internal/')
 
   if (!isLoggedIn && !isPublic) {
     const url = new URL('/login', nextUrl)

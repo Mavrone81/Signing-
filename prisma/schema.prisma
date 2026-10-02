@@ -89,6 +89,7 @@ model User {
   documents Document[]
   memberships Membership[]
   envelopes Envelope[]
+  notifications Notification[]
   createdAt DateTime @default(now())
 }
 
@@ -212,6 +213,47 @@ model Organization {
   signingCertificates SigningCertificate[]
   emailConfig EmailConfig?
   envelopes Envelope[]
+  notifications Notification[]
+}
+
+// Sign #11 — in-app notifications (cert-expiry warnings today; generic
+// enough for future kinds). Each row is BOTH the notification itself AND the
+// DB-backed "already sent" record its reconciliation job checks for
+// idempotency/recovery (process-memory state would die on restart or
+// double-send across instances) — `dedupeKey` is unique so re-running the
+// reconciliation after a crash is always safe.
+model Notification {
+  id String @id @default(cuid())
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  kind String
+  // e.g. "cert_expiry:<certId>:<thresholdDays>:<userId>" — one row per
+  // (kind, subject, threshold, recipient), ever.
+  dedupeKey String @unique
+  // Queryable copies of what dedupeKey encodes as a string, so the display
+  // layer can re-check LIVE state (a post-expiry notice must stay lit
+  // while the certificate remains expired/unreplaced, overriding a
+  // `readAt` that would otherwise silence it) without parsing dedupeKey.
+  // Both null for notification kinds that don't need this.
+  subjectId String?
+  thresholdDays Int?
+  title String
+  body String
+  href String?
+  // The REAL outcome of the email attempt made alongside this notification —
+  // read from sendEmail()'s actual return value, never inferred from
+  // EmailConfig.enabled (a config flag is not a delivery measurement). Null
+  // when no email leg was attempted for this row.
+  emailSent Boolean?
+  emailReason String?
+  // 'org' | 'shared' — which SMTP route carried it, only set when emailSent.
+  emailVia String?
+  readAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, readAt])
+  @@index([orgId])
 }
 
 // Phase 5 — per-org API key for the PUBLIC REST API (`/api/v1/**`). The raw key

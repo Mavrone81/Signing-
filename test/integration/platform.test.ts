@@ -136,15 +136,22 @@ describe('createOrganization', () => {
   })
 
   it('refuses a reused owner email (EMAIL_IN_USE, no org left behind)', async () => {
-    const before = await prisma.organization.count()
+    // Scoped to THIS test's own org name, not a global count: a bare
+    // `organization.count()` measures every org in the shared DB, so any
+    // OTHER file creating an org between the two reads — unavoidable once
+    // tests run in parallel across files —
+    // breaks this assertion for a reason that has nothing to do with the
+    // atomicity it's meant to check.
+    const orgName = 'Reused Owner Co'
+    const before = await prisma.organization.count({ where: { name: orgName } })
     const res = await createOrganization(admin, {
-      orgName: 'Reused Owner Co',
+      orgName,
       ownerName: 'Dup',
       ownerEmail: existingUserEmail,
     })
     expect(res).toEqual({ ok: false, error: 'EMAIL_IN_USE' })
     // Atomicity: the org was NOT created (transaction never ran / rolled back).
-    expect(await prisma.organization.count()).toBe(before)
+    expect(await prisma.organization.count({ where: { name: orgName } })).toBe(before)
   })
 
   it('rejects a half-specified owner (name without email) as INVALID', async () => {

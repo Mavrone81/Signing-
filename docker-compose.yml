@@ -33,6 +33,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Sign #11 round 3: provenance. The deploy script already computes
+      # LOCAL=$(git rev-parse HEAD) before calling `compose ... up --build`
+      # (deploy/auto-deploy-bevorasign.sh) — this is a pass-through of that
+      # same value into the image, never a second derivation. The Docker
+      # build context excludes .git (.dockerignore), so the image cannot
+      # compute this itself; without GIT_SHA set in the shell environment
+      # here, scripts/generate-git-sha.mjs fails the build rather than
+      # shipping an "unknown" placeholder.
+      args:
+        GIT_SHA: ${GIT_SHA}
     container_name: digital-signing-app
     restart: unless-stopped
     env_file: .env

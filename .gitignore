@@ -6,6 +6,10 @@ node_modules
 out
 build
 
+# generated at build time (scripts/generate-git-sha.mjs) — never committed, or
+# a stale value would ship as if it were current provenance.
+src/generated/
+
 # env
 .env
 .env*.local

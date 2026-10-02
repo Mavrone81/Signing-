@@ -8,8 +8,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/copy-pdf-worker.mjs",
-    "predev": "node scripts/copy-pdf-worker.mjs",
-    "prebuild": "node scripts/copy-pdf-worker.mjs",
+    "predev": "node scripts/copy-pdf-worker.mjs && node scripts/generate-git-sha.mjs",
+    "prebuild": "node scripts/copy-pdf-worker.mjs && node scripts/generate-git-sha.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
