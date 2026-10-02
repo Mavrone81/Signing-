@@ -125,7 +125,10 @@ export GIT_SHA="$REMOTE"
 
 if [ "$DOCS_ONLY" = true ]; then
   log "docs-only change; skipping rebuild"
-elif "${COMPOSE[@]}" up -d --build app; then
+# The image build runs scripts/generate-git-sha.mjs, which needs the commit sha;
+# a Docker build context has no .git, so pass it in as the GIT_SHA build arg
+# (docker-compose.yml forwards ${GIT_SHA}). Without it the build fails closed.
+elif GIT_SHA="$(git rev-parse HEAD)" "${COMPOSE[@]}" up -d --build app; then
   # Scoped to dangling images only, and never to volumes. Other tenants on
   # this box must not lose images to our prune.
   docker image prune -f >/dev/null 2>&1 || true
