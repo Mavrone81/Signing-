@@ -326,6 +326,9 @@ export async function saveFields(docId: string, fields: FlatField[]): Promise<vo
  * Throws:
  *  - Error('NOT_FOUND')       — no such document
  *  - Error('409 ALREADY_SIGNED') — the document is already signed
+ *  - Error('SIGNING_NOT_CONFIGURED') — only when env.SIGNING_FAIL_CLOSED is
+ *    on: the org has no active signing certificate. Nothing has been
+ *    persisted yet when this throws (see maybePadesSign in signing-config.ts).
  */
 export async function finalize(
   docId: string,
@@ -512,6 +515,12 @@ export async function deleteDocument(
  *
  * `signerIps` maps Recipient.id → the IP recorded on that recipient's `sign`
  * AuditEvent, so the certificate can print each signer's IP.
+ *
+ * Throws Error('SIGNING_NOT_CONFIGURED') when env.SIGNING_FAIL_CLOSED is on
+ * and the org has no active certificate — the document stays `sent` (not
+ * completed). The caller (completeSigning) catches this specifically: the
+ * recipient's own signature was already committed before this function ran,
+ * so that must not be lost just because sealing cannot proceed yet.
  */
 export async function finalizeSentDocument(
   docId: string,

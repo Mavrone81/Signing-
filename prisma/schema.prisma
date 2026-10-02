@@ -158,8 +158,12 @@ model EmailConfig {
 // (and platform admins) via Settings → Signing.
 model SigningCertificate {
   id String @id
-  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  orgId String
+  // Nullable: a certificate migrated from the old deployment-wide table with
+  // more than one organization already in place is left UNASSIGNED rather
+  // than guessed at (see the 20260921120000 migration) — it belongs to no
+  // org until an admin generates/uploads a fresh one for theirs.
+  org Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String?
   // One active cert per org; saving a new one deactivates that org's others.
   active Boolean @default(true)
   // Encrypted blob-store key holding the PKCS#12 (e.g. "signing/<orgId>/<id>.p12").

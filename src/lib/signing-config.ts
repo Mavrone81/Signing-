@@ -4,6 +4,7 @@
 // point takes the org explicitly — there is no deployment-wide certificate and
 // no fallback to another org's. NEVER import into a client bundle.
 import { prisma } from '@/lib/db'
+import { env } from '@/env'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { getObject } from '@/lib/storage'
 import { padesSign, type SigningMaterial } from '@/server/pdf/pades'
@@ -95,17 +96,30 @@ export async function getActiveSigningMaterial(orgId: string): Promise<SigningMa
 }
 
 /**
- * The "activate when configured / else unchanged" seal step. Seals with the
- * DOCUMENT's org's active certificate; if that org has none, returns the SAME
- * bytes unchanged (byte-identical to the flatten-only path). `orgId` is
- * required so no finalize path can seal without naming its tenant.
+ * Seals with the DOCUMENT's org's active certificate. `orgId` is required so
+ * no finalize path can seal without naming its tenant.
  *
- * Best-effort: if a cert is configured but sealing fails for ANY reason (a
- * dangling/broken config — missing P12 blob, wrong passphrase, forge error),
- * the failure is logged and the UNCHANGED bytes are returned. Document
- * completion is the critical operation; a broken seal config must never trap a
- * fully-signed document in a non-completable state. (The optional RFC-3161
- * timestamp is separately best-effort inside padesSign.)
+ * Behavior when the org has NO active certificate depends on
+ * `env.SIGNING_FAIL_CLOSED` (default OFF):
+ *  - OFF (default): "activate when configured / else unchanged" — returns the
+ *    SAME bytes unchanged (byte-identical to the flatten-only path). This was
+ *    a deliberate product decision ("Document completion is the critical
+ *    operation; a broken seal config must never trap a fully-signed document
+ *    in a non-completable state") and remains the shipped default because, as
+ *    of this change, the live deployment has zero certificate rows for either
+ *    organization — flipping this on unconditionally would stop every
+ *    document completion at the next user action.
+ *  - ON: THROWS Error('SIGNING_NOT_CONFIGURED') instead. An org with no
+ *    certificate is fail-closed for sealing: silently completing a document
+ *    the caller believes is sealed, when it is not, is worse than refusing.
+ *    Turn this on only after every organization's admin has generated or
+ *    uploaded its own certificate in Settings -> Signing.
+ *
+ * Either way: if a cert IS configured but sealing fails for ANY OTHER reason
+ * (a dangling/broken config — missing P12 blob, wrong passphrase, forge
+ * error), the failure is logged and the UNCHANGED bytes are returned — that
+ * best-effort fallback is unrelated to this flag and unchanged by it. (The
+ * optional RFC-3161 timestamp is separately best-effort inside padesSign.)
  */
 export async function maybePadesSign(pdfBytes: Uint8Array, orgId: string): Promise<Uint8Array> {
   let material: SigningMaterial | null
@@ -115,7 +129,10 @@ export async function maybePadesSign(pdfBytes: Uint8Array, orgId: string): Promi
     console.error('[signing] could not load signing material, finalizing without a seal:', err instanceof Error ? err.message : String(err))
     return pdfBytes
   }
-  if (!material) return pdfBytes
+  if (!material) {
+    if (env.SIGNING_FAIL_CLOSED) throw new Error('SIGNING_NOT_CONFIGURED')
+    return pdfBytes
+  }
   try {
     return await padesSign(pdfBytes, material)
   } catch (err) {

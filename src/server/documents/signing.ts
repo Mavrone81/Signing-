@@ -362,7 +362,24 @@ export async function completeSigning(
     if (rid && !signerIps.has(rid)) signerIps.set(rid, e.ip)
   }
 
-  const res = await finalizeSentDocument(v.rec.document.id, signerIps)
+  // Fail-closed sealing (env.SIGNING_FAIL_CLOSED on, org has no cert) throws
+  // SIGNING_NOT_CONFIGURED here. This recipient's signature is already
+  // committed above — losing it because the org's admin hasn't configured a
+  // certificate yet would be its own kind of data loss — so that is caught,
+  // logged, and treated like "not completed yet" (res stays null) rather
+  // than crashing the signer-facing response. The document stays `sent`;
+  // nothing else re-attempts finalize until someone calls it again (e.g.
+  // after the admin configures a certificate).
+  let res: Awaited<ReturnType<typeof finalizeSentDocument>> = null
+  try {
+    res = await finalizeSentDocument(v.rec.document.id, signerIps)
+  } catch (err) {
+    if (err instanceof Error && err.message === 'SIGNING_NOT_CONFIGURED') {
+      console.error(`[completeSigning] document ${v.rec.document.id} fully signed but cannot be sealed: ${err.message}`)
+    } else {
+      throw err
+    }
+  }
   // All signed → completed: email the sender + every recipient (signed PDF
   // attached). Best-effort — never affects the completion result.
   if (res != null) {

@@ -131,7 +131,14 @@ const sessionOf = (id: string, orgId: string, orgRole: 'owner' | 'admin' | 'memb
   user: { id, orgId, orgRole, isPlatformAdmin: false },
 })
 
-describe('activate-when-configured / else unchanged', () => {
+// SIGNING_FAIL_CLOSED is unset here — this is the DEFAULT SHIPPING STATE
+// (off). Fail-closed sealing (an org with no cert refusing, rather than
+// passing bytes through) is covered on purpose in its OWN file,
+// signing-fail-closed.test.ts, which sets the flag on before any app module
+// is imported — env.ts parses process.env once at import time, so the flag
+// cannot be flipped mid-file. See that file for why pass-through still ships
+// as the default tonight.
+describe('activate-when-configured / else unchanged (SIGNING_FAIL_CLOSED default: off)', () => {
   it('maybePadesSign returns the bytes UNCHANGED when the org has no cert', async () => {
     await clearCerts()
     const bytes = await samplePdfBytes()

@@ -13,6 +13,17 @@ const schema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().default(25),
   SEED_ADMIN_EMAIL: z.string().email().default('admin@bevorasg.com'),
   SEED_ADMIN_PASSWORD: z.string().min(8).optional(),
+  // Default-OFF on purpose: today's live deployment has zero signing
+  // certificates for either organization, so an unconditional fail-closed
+  // would stop every document completion at the next user action. Only
+  // flip this on after every org's admin has generated/uploaded its own
+  // certificate in Settings -> Signing. See src/lib/signing-config.ts.
+  // (Not `z.coerce.boolean()`: that treats the STRING "false" as truthy —
+  // only the literal string "true" turns this on.)
+  SIGNING_FAIL_CLOSED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
 })
 export const env = schema.parse(process.env)
 export type Env = z.infer<typeof schema>
