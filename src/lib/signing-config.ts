@@ -7,7 +7,7 @@ import { prisma } from '@/lib/db'
 import { env } from '@/env'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { getObject } from '@/lib/storage'
-import { isCertificateExpired, isCertificateNotYetValid } from '@/lib/pki'
+import { isCertificateExpired, isCertificateNotYetValid, daysUntilExpiry } from '@/lib/pki'
 import { padesSign, type SigningMaterial } from '@/server/pdf/pades'
 
 // Default threshold (F1b) for the settings-page "expires in N days"
@@ -246,6 +246,6 @@ export async function getSigningConfigForClient(orgId: string): Promise<SigningC
     tsaUrl: row.tsaUrl ?? '',
     origin: row.origin,
     expired: isCertificateExpired(row.notAfter),
-    daysUntilExpiry: Math.ceil((row.notAfter.getTime() - Date.now()) / 86_400_000),
+    daysUntilExpiry: daysUntilExpiry(row.notAfter),
   }
 }

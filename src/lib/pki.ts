@@ -16,11 +16,27 @@ export type CertMetadata = {
 }
 
 // Single source of truth for "is this certificate expired", shared by the
-// upload-time rejection (settings/signing/actions.ts) and the sealing-time
-// refusal (signing-config.ts) — both must use the exact same boundary
-// (`<=`, not `<`: a certificate is not valid AT its own expiry instant).
-export function isCertificateExpired(notAfter: Date): boolean {
-  return notAfter.getTime() <= Date.now()
+// upload-time rejection (settings/signing/actions.ts), the sealing-time
+// refusal (signing-config.ts), and Sign #11's expiry-day notification — all
+// three must use the exact same boundary (`<=`, not `<`: a certificate is
+// not valid AT its own expiry instant). `now` is an optional injectable
+// override (defaults to the real clock) so a test can pin it to an exact
+// instant without a global `Date` mock — see Sign #11's threshold tests for
+// why: this feature IS its boundaries, and a global mock can't express "one
+// second either side" as cleanly as passing a `Date`.
+export function isCertificateExpired(notAfter: Date, now: Date = new Date()): boolean {
+  return notAfter.getTime() <= now.getTime()
+}
+
+// Single source of truth for the SOFT countdown (days remaining, can be
+// negative once expired), shared by the settings-page indicator
+// (signing-config.ts) and Sign #11's threshold logic — reused, not
+// recomputed independently, so the two can't drift into disagreement.
+// Math.ceil reaches exactly 0 at the same instant isCertificateExpired turns
+// true (ceil(x) <= 0  <=>  x <= 0 for the same `now`), so the hard and soft
+// checks agree at the boundary by construction, not by coincidence.
+export function daysUntilExpiry(notAfter: Date, now: Date = new Date()): number {
+  return Math.ceil((notAfter.getTime() - now.getTime()) / 86_400_000)
 }
 
 // F1c (found reviewing F1b, by construction): the mirror image of

@@ -24,6 +24,12 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  // Sign #11: shared secret the reconciliation-trigger route requires
+  // (`X-Cron-Secret` header) so only the operator's own scheduler can fire
+  // it, not anyone who finds the URL. Optional here so the app boots without
+  // it; the route itself refuses every request (503) until it is set — see
+  // src/app/api/internal/notifications/reconcile/route.ts.
+  CRON_SECRET: z.string().min(16).optional(),
 })
 export const env = schema.parse(process.env)
 export type Env = z.infer<typeof schema>

@@ -5,6 +5,8 @@ import { prisma } from "@/lib/db";
 import { resolveBrand } from "@/lib/branding";
 import { canManageOrgSettings } from "@/lib/org-settings";
 import { BevoraSignMark, BevoraSignWordmark } from "@/components/brand/BevoraSignMark";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { getNotificationsForUser } from "@/server/notifications/actions";
 
 // Shared shell for all authed pages (only `/documents` today; `/documents/[id]/edit`
 // lands in Task 10). Defensive redirect in addition to `src/middleware.ts` —
@@ -28,6 +30,7 @@ export default async function AppLayout({
         select: { name: true, brandName: true, brandColor: true, logoKey: true },
       })
     : null;
+  const { unreadCount, recent } = await getNotificationsForUser(session.user.id);
   const brand = org ? resolveBrand(org) : null;
 
   return (
@@ -143,6 +146,7 @@ export default async function AppLayout({
                 </Link>
               </>
             )}
+            <NotificationBell unreadCount={unreadCount} recent={recent} />
             <span className="hidden truncate text-[13px] text-muted sm:inline">
               {session.user.email}
             </span>
