@@ -109,19 +109,24 @@ export async function saveSharedEmailConfig(formData: FormData): Promise<void> {
   redirect('/settings/email?saved=shared')
 }
 
-// Send a test email AS the caller's org, to an address the admin chooses (blank
-// = their own). The outcome, the ACTUAL recipient and the server that carried it
-// come back as query params; the page validates `to` again before showing it.
-export async function sendTestEmail(formData: FormData): Promise<void> {
+// Send a test email AS the caller's org, to the SIGNED-IN ACCOUNT'S OWN ADDRESS.
+// The outcome, the recipient and the server that carried it come back as query
+// params; the page validates `to` again before showing it.
+//
+// The recipient is deliberately NOT a parameter. A test email exists to prove
+// the caller's own settings work, and only their own inbox tells them that —
+// delivery to someone else proves nothing to the person who asked for it, and is
+// mail that person never requested. Taking it from the session rather than the
+// form also means the destination cannot be chosen by whatever reaches this
+// function, independently of what the page renders.
+export async function sendTestEmail(_formData: FormData): Promise<void> {
   const session = await auth()
   const user = session?.user
   if (!canManageOrgSettings(user)) redirect('/documents')
 
-  const typed = String(formData.get('to') ?? '').trim()
-  const own = session!.user.email ?? ''
-  const to = parseEmailRecipient(typed || own)
+  const to = parseEmailRecipient(session!.user.email ?? '')
   if (!to) {
-    redirect(`/settings/email?test=fail&reason=${typed ? 'bad_recipient' : 'no_admin_email'}`)
+    redirect('/settings/email?test=fail&reason=no_admin_email')
   }
   const q = `to=${encodeURIComponent(to)}`
 
