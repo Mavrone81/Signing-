@@ -202,8 +202,11 @@ describe('test email recipient', () => {
     const to = await run(ownerSession(), () => sendTestEmail(smtpForm({ to: 'x@example.com' })))
     // Port 1 refuses the connection: an error, carried by the shared server —
     // and addressed to the admin, not to the address that was submitted.
-    expect(to).toMatch(
-      new RegExp(`test=fail&reason=error&to=${encodeURIComponent(encodeURIComponent(ownerEmail))}&via=shared$`),
+    // encodeURIComponent ONCE: the redirect carries the already-encoded address,
+    // and encoding it a second time to build the pattern would look for %2540
+    // where the string holds %40.
+    expect(to).toBe(
+      `/settings/email?test=fail&reason=error&to=${encodeURIComponent(ownerEmail)}&via=shared`,
     )
   })
 
