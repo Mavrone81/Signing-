@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { auth } from '@/auth'
+import { prisma } from '@/lib/db'
 import { canManageOrgSettings } from '@/lib/org-settings'
 import { getSigningConfigForClient, EXPIRY_WARNING_DAYS } from '@/lib/signing-config'
 import {
@@ -36,6 +37,10 @@ export default async function SigningSettingsPage({
 
   const { saved, error } = await searchParams
   const cfg = await getSigningConfigForClient(user.orgId)
+  // The CN is the name a recipient sees in their PDF reader's signature
+  // panel, so it defaults to this organization rather than the product.
+  const org = await prisma.organization.findUnique({ where: { id: user.orgId }, select: { name: true } })
+  const defaultSignerName = org?.name?.trim() || 'Bevora Sign'
   const configured = cfg?.configured === true
 
   return (
@@ -183,9 +188,13 @@ export default async function SigningSettingsPage({
         <form action={generatePlatformCertificate} className="mt-4 space-y-4">
           <div>
             <label className="mb-1.5 block text-[13px] font-medium text-ink">
-              Common name (CN)
+              Signer name (certificate CN)
             </label>
-            <input name="commonName" type="text" defaultValue="Bevora Sign" className={fieldClass()} />
+            <input name="commonName" type="text" defaultValue={defaultSignerName} className={fieldClass()} />
+            <p className="mt-1 text-[12px] text-muted">
+              Shown to recipients in their PDF reader&apos;s signature panel. Defaults to your
+              organization&apos;s name.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>

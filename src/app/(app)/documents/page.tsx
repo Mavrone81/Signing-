@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { UploadDropzone } from "@/components/documents/UploadDropzone";
 import { DocumentList } from "@/components/documents/DocumentList";
 import { DashboardFilters } from "@/components/documents/DashboardFilters";
+import { SigningSetupNotice } from "@/components/documents/SigningSetupNotice";
 
 export const metadata: Metadata = { title: "Documents · Bevora Sign" };
 
@@ -71,6 +72,10 @@ export default async function DocumentsPage({
         title="Documents"
         subtitle="Upload a PDF, then place signature, date, and text fields."
       />
+      {/* Above the upload box on purpose: an org with no certificate should see
+          this BEFORE it finalizes its first document, not after. Renders nothing
+          once a certificate exists, or for anyone who could not act on it. */}
+      <SigningSetupNotice user={session.user} />
       <UploadDropzone />
       <DashboardFilters status={status} q={q} />
       <DocumentList documents={documents} activeStatus={status} query={q} />
