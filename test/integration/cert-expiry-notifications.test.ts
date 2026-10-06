@@ -157,14 +157,19 @@ describe('multi-tenant scoping (load-bearing, not a courtesy)', () => {
 
 describe('must-not-alert', () => {
   it('an org with no certificate at all produces nothing', async () => {
-    const result = await reconcileCertExpiryNotifications(NOW)
-    expect(result.created).toBe(0)
+    // Scoped to this org for the same reason as the idempotency test: the
+    // returned count is global, and other files create due certificates in
+    // parallel against the same database.
+    const before = await prisma.notification.count({ where: { orgId: orgA } })
+    await reconcileCertExpiryNotifications(NOW)
+    expect(await prisma.notification.count({ where: { orgId: orgA } })).toBe(before)
   })
 
   it('a long-lived cert at 31 days out: silent (must-not-fire)', async () => {
     await mkCert({ orgId: orgA, notAfter: daysOut(31), createdAt: LONG_AGO })
-    const result = await reconcileCertExpiryNotifications(NOW)
-    expect(result.created).toBe(0)
+    const before = await prisma.notification.count({ where: { orgId: orgA } })
+    await reconcileCertExpiryNotifications(NOW)
+    expect(await prisma.notification.count({ where: { orgId: orgA } })).toBe(before)
   })
 
   it('a long-lived cert at 8 days out: fires the 30-day notice only, NOT the 7-day one yet', async () => {
@@ -186,13 +191,24 @@ describe('must-not-alert', () => {
 
 describe('idempotency (DB-backed, survives a second run)', () => {
   it('running reconciliation twice at the same instant creates nothing the second time', async () => {
+    // Counted FOR THIS ORG, not from the returned `created`. Reconciliation
+    // scans every active certificate in the database and returns a GLOBAL
+    // count, while vitest runs test files in parallel against one database —
+    // and three other files create active, already-expired certificates. One
+    // of those landing between these two calls makes `created` non-zero for a
+    // reason that has nothing to do with idempotency, which is what made this
+    // test fail intermittently. The claim under test is "this org gains no
+    // second notification", so that is what is measured.
     await mkCert({ orgId: orgA, notAfter: daysOut(1), createdAt: LONG_AGO })
-    const first = await reconcileCertExpiryNotifications(NOW)
-    expect(first.created).toBeGreaterThan(0)
-    const second = await reconcileCertExpiryNotifications(NOW)
-    expect(second.created).toBe(0)
-    const total = await prisma.notification.count({ where: { orgId: orgA } })
-    expect(total).toBe(first.created)
+
+    const before = await prisma.notification.count({ where: { orgId: orgA } })
+    await reconcileCertExpiryNotifications(NOW)
+    const afterFirst = await prisma.notification.count({ where: { orgId: orgA } })
+    expect(afterFirst).toBeGreaterThan(before) // the first run really did create some
+
+    await reconcileCertExpiryNotifications(NOW)
+    const afterSecond = await prisma.notification.count({ where: { orgId: orgA } })
+    expect(afterSecond).toBe(afterFirst) // and the second created nothing at all
   })
 
   it('a later run, once a NEW threshold is crossed, creates only the new ones (old ones are not re-sent)', async () => {
@@ -214,11 +230,14 @@ describe('idempotency (DB-backed, survives a second run)', () => {
     // narrowest case that can expose a duplicate send.
     await mkCert({ orgId: orgA, notAfter: NOW, createdAt: NOW })
 
-    const [a, b] = await Promise.all([
+    await Promise.all([
       reconcileCertExpiryNotifications(NOW),
       reconcileCertExpiryNotifications(NOW),
     ])
-    expect(a.created + b.created).toBe(2) // owner + admin, exactly once each, across BOTH calls combined
+    // Both calls together created exactly two rows FOR THIS ORG — owner and
+    // admin, once each. Asserted on this org's rows rather than on the summed
+    // return values, which another file's certificate can inflate.
+    expect(await prisma.notification.count({ where: { orgId: orgA, kind: 'cert_expiry' } })).toBe(2)
 
     const rows = await prisma.notification.findMany({ where: { orgId: orgA } })
     expect(rows).toHaveLength(2)
