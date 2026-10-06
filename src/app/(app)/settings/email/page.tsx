@@ -24,7 +24,6 @@ const TEST_REASON: Record<string, string> = {
     'Neither your organization’s own server nor the shared server is set up, so no email can be sent yet.',
   error: 'The SMTP server rejected or failed the send. Check the host, port, credentials, and TLS setting.',
   no_admin_email: 'Your account has no email address. Type the address to send the test to.',
-  bad_recipient: 'That doesn’t look like an email address.',
 }
 
 const VIA_LABEL: Record<string, string> = {
@@ -184,27 +183,28 @@ export default async function EmailSettingsPage({
         </p>
 
         <form action={sendTestEmail} className="mt-4 space-y-2 border-t border-edge pt-4">
-          <label htmlFor="test-to" className="block text-[13px] font-medium text-ink">
-            Send a test email to
-          </label>
+          {/* The destination is the signed-in account's own address and is not an
+              input. A test exists to prove YOUR settings work, which only your own
+              inbox can tell you — someone else receiving it proves nothing to you
+              and is mail they did not ask for. The server ignores a submitted
+              address regardless of what reaches it. */}
+          <p className="block text-[13px] font-medium text-ink">
+            Send a test email to <span className="font-normal text-muted">{ownEmail || 'your account address'}</span>
+          </p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              id="test-to"
-              name="to"
-              type="email"
-              defaultValue={testedTo ?? ownEmail}
-              placeholder={ownEmail || 'name@example.com'}
-              autoComplete="email"
-              className={fieldClass()}
-            />
             <button
               type="submit"
-              className="shrink-0 rounded-lg border border-edge-strong px-4 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-shell"
+              disabled={!ownEmail}
+              className="shrink-0 rounded-lg border border-edge-strong px-4 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-shell disabled:cursor-not-allowed disabled:opacity-50"
             >
               Send test email
             </button>
           </div>
-          <p className="text-[12px] text-muted">Leave blank to send it to yourself. Save first — the test uses the stored settings.</p>
+          <p className="text-[12px] text-muted">
+            {ownEmail
+              ? 'Goes to your own account address. Save first — the test uses the stored settings.'
+              : 'Your account has no email address, so there is nowhere to send a test.'}
+          </p>
         </form>
       </section>
 

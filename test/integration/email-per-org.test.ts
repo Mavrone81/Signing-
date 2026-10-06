@@ -170,22 +170,29 @@ describe('settings actions: gate and tenancy', () => {
   })
 })
 
+// The test email's recipient is the signed-in account's own address and is not
+// a parameter. These tests assert that from the SERVER's side, submitting a
+// recipient anyway — which is what reaches the action regardless of what the
+// page renders, since removing an input does not stop a form being posted.
 describe('test email recipient', () => {
-  it('blank sends to the admin’s own address and reports it', async () => {
-    const to = await run(ownerSession(), () => sendTestEmail(smtpForm({ to: '' })))
+  it('sends to the admin’s own address and reports it', async () => {
+    const to = await run(ownerSession(), () => sendTestEmail(smtpForm({})))
     // No server set up → fails, but the redirect still names the real recipient.
     expect(to).toBe(`/settings/email?test=fail&reason=not_configured&to=${encodeURIComponent(ownerEmail)}`)
   })
 
-  it('a chosen address is used and echoed, not the admin’s own', async () => {
+  it('IGNORES a submitted address and still sends to the admin’s own', async () => {
     const to = await run(ownerSession(), () => sendTestEmail(smtpForm({ to: '  Someone@Example.COM ' })))
-    expect(to).toContain('to=someone%40example.com')
-    expect(to).not.toContain(encodeURIComponent(ownerEmail))
+    expect(to).toContain(`to=${encodeURIComponent(ownerEmail)}`)
+    expect(to).not.toContain('someone%40example.com')
   })
 
-  it('an invalid address is refused without sending', async () => {
+  it('IGNORES a submitted address even when it is unparseable, rather than failing on it', async () => {
+    // The old behaviour refused this with `bad_recipient`. There is no longer a
+    // submitted address to be invalid, so the run proceeds to the admin's own.
     const to = await run(ownerSession(), () => sendTestEmail(smtpForm({ to: 'not an email' })))
-    expect(to).toBe('/settings/email?test=fail&reason=bad_recipient')
+    expect(to).toContain(`to=${encodeURIComponent(ownerEmail)}`)
+    expect(to).not.toContain('bad_recipient')
   })
 
   it('reports the server that carried the attempt', async () => {
@@ -193,7 +200,18 @@ describe('test email recipient', () => {
       saveSharedEmailConfig(smtpForm({ ...SHARED, host: '127.0.0.1', port: '1' })),
     )
     const to = await run(ownerSession(), () => sendTestEmail(smtpForm({ to: 'x@example.com' })))
-    // Port 1 refuses the connection: an error, carried by the shared server.
-    expect(to).toMatch(/test=fail&reason=error&to=x%40example\.com&via=shared$/)
+    // Port 1 refuses the connection: an error, carried by the shared server —
+    // and addressed to the admin, not to the address that was submitted.
+    expect(to).toMatch(
+      new RegExp(`test=fail&reason=error&to=${encodeURIComponent(encodeURIComponent(ownerEmail))}&via=shared$`),
+    )
+  })
+
+  it('an account with no email address sends nothing at all', async () => {
+    const to = await run(
+      { user: { id: ownerA, email: null, orgId: orgA, orgRole: 'owner', isPlatformAdmin: false } },
+      () => sendTestEmail(smtpForm({ to: 'someone@example.com' })),
+    )
+    expect(to).toBe('/settings/email?test=fail&reason=no_admin_email')
   })
 })
