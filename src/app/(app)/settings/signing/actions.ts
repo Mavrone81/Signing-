@@ -93,7 +93,15 @@ function activeCertOf(orgId: string) {
 export async function generatePlatformCertificate(formData: FormData): Promise<void> {
   const { orgId, userId } = await requireOrgManager()
 
-  const commonName = String(formData.get('commonName') ?? '').trim() || 'Bevora Sign'
+  // The common name is WHO THE DOCUMENT SAYS SIGNED IT, shown in a PDF reader's
+  // signature panel. Falling back to the product name would issue every
+  // organization's certificate in Bevora's name, which is wrong on its face and
+  // wrong in what it tells a recipient. The org's own name is the only sensible
+  // default; the product name remains a last resort for an org somehow without
+  // one, so this can never produce an empty CN.
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { name: true } })
+  const commonName =
+    String(formData.get('commonName') ?? '').trim() || org?.name?.trim() || 'Bevora Sign'
   const yearsRaw = Number.parseInt(String(formData.get('years') ?? ''), 10)
   const years = Number.isFinite(yearsRaw) && yearsRaw >= 1 && yearsRaw <= 30 ? yearsRaw : 3
   const tsaUrl = cleanTsa(String(formData.get('tsaUrl') ?? ''))

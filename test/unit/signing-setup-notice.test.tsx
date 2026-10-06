@@ -9,8 +9,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 // isSigningConfigured is mocked rather than seeded, because what is under test
 // is the decision — show or not — not how a certificate is stored. The real
 // function's own behaviour is covered where it lives.
-const { isSigningConfiguredMock } = vi.hoisted(() => ({ isSigningConfiguredMock: vi.fn() }))
+const { isSigningConfiguredMock, findOrgMock, generateMock } = vi.hoisted(() => ({
+  isSigningConfiguredMock: vi.fn(),
+  findOrgMock: vi.fn(),
+  generateMock: vi.fn(),
+}))
 vi.mock('@/lib/signing-config', () => ({ isSigningConfigured: isSigningConfiguredMock }))
+vi.mock('@/lib/db', () => ({ prisma: { organization: { findUnique: findOrgMock } } }))
+vi.mock('@/app/(app)/settings/signing/actions', () => ({ generatePlatformCertificate: generateMock }))
 
 import { SigningSetupNotice } from '../../src/components/documents/SigningSetupNotice'
 
@@ -27,6 +33,8 @@ async function render(user: unknown): Promise<string> {
 
 beforeEach(() => {
   isSigningConfiguredMock.mockReset()
+  findOrgMock.mockReset()
+  findOrgMock.mockResolvedValue({ name: 'Acme Pte Ltd' })
 })
 
 describe('SigningSetupNotice', () => {
@@ -37,6 +45,24 @@ describe('SigningSetupNotice', () => {
     expect(html).toContain('/settings/signing')
     // The honest consequence, not just a nudge: a reader cannot verify the doc.
     expect(html).toContain('not sealed')
+    // The button is HERE, not only behind a link to settings.
+    expect(html).toContain('Generate a certificate')
+    expect(html).toContain('<form')
+  })
+
+  it('issues the certificate in the ORGANIZATION name, not the product name', async () => {
+    isSigningConfiguredMock.mockResolvedValue(false)
+    const html = await render(owner)
+    // The hidden field is what the action actually receives.
+    expect(html).toContain('name="commonName"')
+    expect(html).toContain('value="Acme Pte Ltd"')
+    expect(html).not.toContain('value="Bevora Sign"')
+  })
+
+  it('asks the org by its own id', async () => {
+    isSigningConfiguredMock.mockResolvedValue(false)
+    await render(owner)
+    expect(findOrgMock).toHaveBeenCalledWith({ where: { id: ORG }, select: { name: true } })
   })
 
   it('shows to an admin too — the owner is not the only one who can act', async () => {
